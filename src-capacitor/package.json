@@ -1,0 +1,13 @@
+{
+  "name": "pos",
+  "version": "0.0.1",
+  "description": "A Telas Emanuel project",
+  "author": "22090601@alumno.utmetropolitana.edu.mx <22090601@alumno.utmetropolitana.edu.mx>",
+  "private": true,
+  "dependencies": {
+    "@capacitor/android": "^7.4.4",
+    "@capacitor/app": "^7.0.0",
+    "@capacitor/cli": "^7.0.0",
+    "@capacitor/core": "^7.0.0"
+  }
+}
