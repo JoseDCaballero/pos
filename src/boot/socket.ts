@@ -1,17 +1,25 @@
-import { boot } from 'quasar/wrappers'
-import { io } from 'socket.io-client'
-// Tu URL de Render (ejemplo: https://mi-api-pos.onrender.com)
-const socket = io('https://apinventario.onrender.com', {
-  transports: ['websocket'], // <--- ¡ESTO ES VITAL EN RENDER!
-  autoConnect: true
-})
+import { boot } from "quasar/wrappers";
+import { io } from "socket.io-client";
 
-socket.on('connect', () => {
-  console.log('Conectado al servidor de sockets con ID:', socket.id)
+const socket = io(import.meta.env.VITE_API_SOCKET, {
+  transports: ["websocket"], // <--- ¡ESTO ES VITAL EN RENDER!
+  autoConnect: true,
+});
+
+socket.on("connect", () => {
+  console.log("Conectado al servidor de sockets con ID:", socket.id);
+});
+
+socket.on("connect_error", (err) => {
+  console.error("Error de conexión al socket:", err);
+});
+
+socket.on("disconnect", (reason) => {
+  console.warn("Socket desconectado:", reason);
 });
 
 export default boot(({ app }) => {
-  app.config.globalProperties.$socket = socket
-})
+  app.config.globalProperties.$socket = socket;
+});
 
-export { socket }
+export { socket };

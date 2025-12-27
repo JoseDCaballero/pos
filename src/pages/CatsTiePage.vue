@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
-import axios from 'axios';
+import api from 'src/api/axios';
 
 interface Categoria {
   id: number
   nombre: string
+  descripcion: string
 }
 
 const existencias = ref<unknown[]>([]);
@@ -13,7 +14,7 @@ const loading = ref(false);
 
 const mostrarExistencias = async () => {
   try {
-    const res = await axios.get(import.meta.env.VITE_API + 'inventarios');
+    const res = await api.get('inventarios');
     existencias.value = res.data;
     loading.value = true;
   } catch (err) {
@@ -23,7 +24,7 @@ const mostrarExistencias = async () => {
 
 const cargarCategorias = async () => {
   try {
-    const response = await axios.get(import.meta.env.VITE_API + 'categorias');
+    const response = await api.get('categorias');
     categorias.value = response.data;
   } catch (err) {
     console.error('Error al cargar categorías', err);
@@ -46,7 +47,8 @@ onMounted(() => {
     <h1 class="main-title">Existencias</h1>
     <section class="actions">
       <router-link v-for="cat in categorias" :key="cat.id"
-        :to="{ name: 'ConfiguracionPorCategoriaTienda', params: { categoryId: cat.id } }" class="card">
+        :to="{ name: 'ConfiguracionPorCategoriaTienda', params: { categoryId: cat.id }, query: { descripcion: cat.descripcion } }"
+        class="card">
         <p class="sections">{{ cat.nombre }}</p>
       </router-link>
     </section>

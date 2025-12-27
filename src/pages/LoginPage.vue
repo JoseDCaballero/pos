@@ -1,38 +1,35 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
-import axios, { type AxiosError } from 'axios';
+import api from 'src/api/axios';
+import { useAuthStore } from 'src/stores/auth';
 
 const router = useRouter()
 const username = ref('')
 const password = ref('')
 const mensajeError = ref('')
 const isPwd = ref(true)
+const isLoading = ref(false)
 const datos = ref<{ email?: string } | null>(null);
 
 const login = async () => {
   mensajeError.value = ''
+  isLoading.value = true
   //await router.push('/select');
   try {
-    const response = await axios.post(import.meta.env.VITE_API + 'usuarios/login', {
+    const response = await api.post('usuarios/login', {
       email: username.value,
       passw: password.value
     });
-    // 1. Extraer el token de la respuesta
+
     const token = response.data.token;
+    const usuario = response.data.usuario;
 
     if (token) {
-      // 2. Guardar en sessionStorage
-      sessionStorage.setItem('auth_token', token);
+      const authStore = useAuthStore();
+      authStore.login(token, usuario);
+      datos.value = usuario;
 
-      // Opcional: Guardar datos del usuario (como string JSON)
-      sessionStorage.setItem('user_data', JSON.stringify(response.data.usuario));
-
-      const datosString = sessionStorage.getItem('user_data');
-      if (datosString) {
-        datos.value = JSON.parse(datosString);
-      }
-      // 3. Redirigir
       switch (datos.value?.email) {
         case 'caja':
           await router.push('/carrito');
@@ -40,18 +37,27 @@ const login = async () => {
         case 'vendedor':
           await router.push('/select');
           break;
+        case 'admin':
+          // agregar redirección si aplica
+          break;
+        default:
+          mensajeError.value = 'No debería llegar a este punto pero bueno.';
+          break;
       }
     }
 
-  } catch (error) {
-    const err = error as AxiosError; // Casteamos el error
-    console.error('Error durante el inicio de sesión:', err);
+  } catch (error: unknown) {
+    console.error('Error durante el inicio de sesión:', error);
+    const isApiError = (e: unknown): e is { response?: { status?: number } } =>
+      typeof e === 'object' && e !== null && 'response' in e;
 
-    if (err.response && err.response.status === 401) {
+    if (isApiError(error) && error.response?.status === 401) {
       mensajeError.value = 'Credenciales inválidas. Revisa tu usuario y contraseña.';
     } else {
       mensajeError.value = 'Hubo un problema al conectar con el servidor.';
     }
+  } finally {
+    isLoading.value = false
   }
 }
 </script>
@@ -67,17 +73,23 @@ const login = async () => {
       <div class="input-group password-group">
         <label for="password">Contraseña:</label>
         <input :type="isPwd ? 'password' : 'text'" id="password" v-model="password" required />
-        <span @click="isPwd = !isPwd" class="toggle-password" :title="isPwd ? 'Mostrar contraseña' : 'Ocultar contraseña'">
+        <span @click="isPwd = !isPwd" class="toggle-password"
+          :title="isPwd ? 'Mostrar contraseña' : 'Ocultar contraseña'">
           <svg v-if="isPwd" class="eye-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M1 12C1 12 5 4 12 4C19 4 23 12 23 12C23 12 19 20 12 20C5 20 1 12 1 12Z" stroke="#8B4513" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-            <circle cx="12" cy="12" r="3" stroke="#8B4513" stroke-width="2"/>
+            <path d="M1 12C1 12 5 4 12 4C19 4 23 12 23 12C23 12 19 20 12 20C5 20 1 12 1 12Z" stroke="#8B4513"
+              stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            <circle cx="12" cy="12" r="3" stroke="#8B4513" stroke-width="2" />
           </svg>
           <svg v-else class="eye-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M2.99902 3L20.999 21M9.8433 9.91364C9.32066 10.4536 8.99902 11.1892 8.99902 12C8.99902 13.6569 10.3422 15 11.999 15C12.8215 15 13.5667 14.669 14.1086 14.133M6.49902 6.64715C4.59972 7.90034 3.15305 9.78394 2.45703 12C3.73128 16.0571 7.52159 19 11.9992 19C13.9881 19 15.8414 18.4194 17.3988 17.4184M10.999 5.04939C11.328 5.01673 11.6617 5 11.9992 5C16.4769 5 20.2672 7.94291 21.5414 12C21.2607 12.894 20.8577 13.7338 20.3522 14.5" stroke="#8B4513" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            <path
+              d="M2.99902 3L20.999 21M9.8433 9.91364C9.32066 10.4536 8.99902 11.1892 8.99902 12C8.99902 13.6569 10.3422 15 11.999 15C12.8215 15 13.5667 14.669 14.1086 14.133M6.49902 6.64715C4.59972 7.90034 3.15305 9.78394 2.45703 12C3.73128 16.0571 7.52159 19 11.9992 19C13.9881 19 15.8414 18.4194 17.3988 17.4184M10.999 5.04939C11.328 5.01673 11.6617 5 11.9992 5C16.4769 5 20.2672 7.94291 21.5414 12C21.2607 12.894 20.8577 13.7338 20.3522 14.5"
+              stroke="#8B4513" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
           </svg>
         </span>
       </div>
-      <button type="submit">Iniciar Sesión</button>
+      <button type="submit" :disabled="isLoading">
+        {{ isLoading ? 'Iniciando...' : 'Iniciar Sesión' }}
+      </button>
       <p v-if="mensajeError" class="error-message">{{ mensajeError }}</p>
     </form>
   </main>
@@ -103,13 +115,18 @@ main::before {
   width: 100%;
   height: 100%;
   background: radial-gradient(circle at 20% 80%, rgba(139, 69, 19, 0.1) 0%, transparent 50%),
-              radial-gradient(circle at 80% 20%, rgba(255, 215, 0, 0.1) 0%, transparent 50%);
+    radial-gradient(circle at 80% 20%, rgba(255, 215, 0, 0.1) 0%, transparent 50%);
   animation: float 10s ease-in-out infinite alternate;
 }
 
 @keyframes float {
-  0% { transform: translateY(0px) rotate(0deg); }
-  100% { transform: translateY(-20px) rotate(5deg); }
+  0% {
+    transform: translateY(0px) rotate(0deg);
+  }
+
+  100% {
+    transform: translateY(-20px) rotate(5deg);
+  }
 }
 
 form {
@@ -134,8 +151,15 @@ form:hover {
 }
 
 @keyframes slideIn {
-  from { opacity: 0; transform: translateY(50px) perspective(1000px) rotateX(10deg); }
-  to { opacity: 1; transform: translateY(0) perspective(1000px) rotateX(5deg); }
+  from {
+    opacity: 0;
+    transform: translateY(50px) perspective(1000px) rotateX(10deg);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) perspective(1000px) rotateX(5deg);
+  }
 }
 
 h1 {
@@ -167,7 +191,8 @@ label {
 
 input {
   width: 100%;
-  padding: 1rem 3rem 1rem 1.5rem; /* Espacio extra a la derecha para el ícono */
+  padding: 1rem 3rem 1rem 1.5rem;
+  /* Espacio extra a la derecha para el ícono */
   border: none;
   border-radius: 15px;
   background: rgba(255, 255, 255, 0.8);
@@ -219,7 +244,8 @@ input:focus {
 }
 
 .eye-icon:hover {
-  stroke: #FFD700; /* Cambia a amarillo en hover */
+  stroke: #FFD700;
+  /* Cambia a amarillo en hover */
 }
 
 button {
@@ -262,6 +288,13 @@ button:active {
   transform: translateY(-2px);
 }
 
+button:disabled {
+  cursor: not-allowed;
+  filter: grayscale(0.2) brightness(0.95);
+  box-shadow: none;
+  transform: none;
+}
+
 .error-message {
   text-align: center;
   color: #FFD700;
@@ -272,9 +305,19 @@ button:active {
 }
 
 @keyframes shake {
-  0%, 100% { transform: translateX(0); }
-  25% { transform: translateX(-5px); }
-  75% { transform: translateX(5px); }
+
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+
+  25% {
+    transform: translateX(-5px);
+  }
+
+  75% {
+    transform: translateX(5px);
+  }
 }
 
 @media (max-width: 600px) {
@@ -282,6 +325,7 @@ button:active {
     padding: 2rem;
     margin: 1rem;
   }
+
   h1 {
     font-size: 2rem;
   }

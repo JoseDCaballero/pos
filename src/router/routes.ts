@@ -1,7 +1,16 @@
-import type { RouteRecordRaw } from 'vue-router';
-import MainLayout from 'layouts/MainLayout.vue';
-import DefaultLayout from 'layouts/DefaultLayout.vue';
-import { HomePage, CatsBodPage, CatsTiePage, ProdsBodPage, ProdsTiePage, LoginPage, PedidosPage, CarritoPage } from '../pages/index';
+import type { RouteRecordRaw } from "vue-router";
+import MainLayout from "layouts/MainLayout.vue";
+import DefaultLayout from "layouts/DefaultLayout.vue";
+import {
+  HomePage,
+  CatsBodPage,
+  CatsTiePage,
+  ProdsBodPage,
+  ProdsTiePage,
+  LoginPage,
+  PedidosPage,
+  CarritoPage,
+} from "../pages/index";
 
 const routes: RouteRecordRaw[] = [
   // {
@@ -10,76 +19,83 @@ const routes: RouteRecordRaw[] = [
   //   children: [{ path: '', component: () => import('pages/IndexPage.vue') }],
   // },
   {
-    path: '/',
+    path: "/",
     component: LoginPage,
     meta: {
-      title: 'Inicia sesión',
-      layout: DefaultLayout
-    }
+      title: "Inicia sesión",
+      layout: DefaultLayout,
+    },
   },
   {
-    path: '/select',
+    path: "/select",
     component: HomePage,
     meta: {
-      title: 'Inicio',
-      layout: MainLayout
-    }
+      title: "Inicio",
+      layout: MainLayout,
+    },
   },
   {
-    path: '/bodega',
+    path: "/bodega",
     component: CatsBodPage,
     meta: {
-      title: 'Inventario de bodega',
-      layout: MainLayout
-    }
+      title: "Inventario de bodega",
+      layout: MainLayout,
+    },
   },
   {
-    path: '/existencias-bodega/:categoryId',
-    name: 'ConfiguracionPorCategoria',
+    path: "/existencias-bodega/:categoryId",
+    name: "ConfiguracionPorCategoria",
     component: ProdsBodPage,
-    props: true,
+    props: (route) => ({
+      categoryId: route.params.categoryId,
+      technicalCard: route.query.technicalCard,
+      descripcion: route.query.descripcion,
+    }),
     meta: {
-      title: 'Inventario de bodega',
-      layout: MainLayout
-    }
+      title: "Inventario de bodega",
+      layout: MainLayout,
+    },
   },
   {
-    path: '/tienda',
+    path: "/tienda",
     component: CatsTiePage,
     meta: {
-      title: 'Inventario de tienda',
-      layout: MainLayout
-    }
+      title: "Inventario de tienda",
+      layout: MainLayout,
+    },
   },
   {
-    path: '/existencias-tienda/:categoryId',
-    name: 'ConfiguracionPorCategoriaTienda',
+    path: "/existencias-tienda/:categoryId",
+    name: "ConfiguracionPorCategoriaTienda",
     component: ProdsTiePage,
-    props: true,
+    props: (route) => ({
+      categoryId: route.params.categoryId,
+      descripcion: route.query.descripcion,
+    }),
     meta: {
-      title: 'Inventario de tienda',
-      layout: MainLayout
-    }
+      title: "Inventario de tienda",
+      layout: MainLayout,
+    },
   },
   {
-    path: '/caja',
+    path: "/caja",
     component: PedidosPage,
     meta: {
-      title: 'Pedidos activos',
-      layout: MainLayout
-    }
+      title: "Pedidos activos",
+      layout: MainLayout,
+    },
   },
   {
-    path: '/carrito',
+    path: "/carrito",
     component: CarritoPage,
     meta: {
-      title: 'Carrito de Compras',
-      layout: MainLayout
-    }
+      title: "Carrito de Compras",
+      layout: MainLayout,
+    },
   },
   {
-    path: '/:catchAll(.*)*',
-    component: () => import('pages/ErrorNotFound.vue'),
+    path: "/:catchAll(.*)*",
+    component: () => import("pages/ErrorNotFound.vue"),
   },
 ];
 
