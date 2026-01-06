@@ -8,8 +8,10 @@ import { useAuthStore } from 'src/stores/auth';
 
 interface Producto {
   id: number
+  producto_id?: number
   bodega_id: number
   producto?: {
+    id?: number
     nombre: string
     categoria_id: number
   }
@@ -59,6 +61,8 @@ const cargarProductos = async () => {
     const res = await api.get('inventarios')
     const items = Array.isArray(res.data) ? res.data : (res.data.items ?? [])
     productos.value = items.map((p: Producto) => ({ ...p, cantidadPedido: 0 }))
+    // Después de cargar productos intentamos restaurar cantidades desde sessionStorage
+    restaurarTemporal()
   } catch (err) {
     console.error('Error cargando productos', err)
     productos.value = []
@@ -134,7 +138,7 @@ const enviarPedido = async () => {
     const comprador = nombreCliente.value.trim()
 
     const productosParaPedido: ProductoPedido[] = productosSeleccionados.value.map(p => ({
-      productoId: p.id,
+      productoId: Number(p.producto_id ?? p.producto?.id ?? p.id),
       nombre: p.producto?.nombre || 'Producto',
       cantidad: p.cantidadPedido,
       medida: p.medida_ind
@@ -159,6 +163,8 @@ const enviarPedido = async () => {
 
     // Limpiar nombre del cliente después de enviar
     nombreCliente.value = ''
+    // Limpiar almacenamiento temporal
+    sessionStorage.removeItem('pedido_temp')
 
     $q.notify({
       message: '¡Pedido enviado exitosamente!',
@@ -183,6 +189,8 @@ const cancelarPedido = () => {
   productos.value.forEach(p => {
     p.cantidadPedido = 0
   })
+  // Limpiar almacenamiento temporal cuando se cancela
+  sessionStorage.removeItem('pedido_temp')
   $q.notify({
     message: 'Pedido cancelado',
     color: 'info',
@@ -191,7 +199,50 @@ const cancelarPedido = () => {
   })
 }
 
-onMounted(() => {
+// Persistencia temporal del pedido (nombre y cantidades) en sessionStorage
+const STORAGE_KEY = 'pedido_temp'
+
+const guardarTemporal = () => {
+  try {
+    const seleccion = productos.value
+      .filter(p => p.cantidadPedido > 0)
+      .map(p => ({ id: p.id, cantidadPedido: p.cantidadPedido }))
+
+    const payload = {
+      nombreCliente: nombreCliente.value,
+      seleccion
+    }
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(payload))
+  } catch (err) {
+    console.error('Error guardando temporal:', err)
+  }
+}
+
+const restaurarTemporal = () => {
+  try {
+    const raw = sessionStorage.getItem(STORAGE_KEY)
+    if (!raw) return
+    const data = JSON.parse(raw)
+    if (data?.nombreCliente) {
+      nombreCliente.value = data.nombreCliente
+    }
+    if (Array.isArray(data?.seleccion)) {
+      data.seleccion.forEach((s: { id: number; cantidadPedido: number }) => {
+        const prod = productos.value.find(p => p.id === s.id)
+        if (prod) prod.cantidadPedido = s.cantidadPedido
+      })
+    }
+  } catch (err) {
+    console.error('Error restaurando temporal:', err)
+  }
+}
+
+// Vigilar cambios para guardar temporalmente
+watch(productos, () => guardarTemporal(), { deep: true })
+watch(nombreCliente, () => guardarTemporal())
+
+// Inicialización
+onMounted(async () => {
   const datosString = sessionStorage.getItem('user_data');
   if (datosString) {
     datos.value = JSON.parse(datosString);
@@ -201,7 +252,9 @@ onMounted(() => {
     categoriaSeleccionada.value = props.categoryId
   }
   void cargarCategoria()
-  void cargarProductos()
+  await cargarProductos()
+  // asegurar que si el store de auth ya tiene user lo asignamos
+  datos.value = authStore.user;
 })
 
 watch(() => props.categoryId, (newVal) => {
@@ -209,10 +262,6 @@ watch(() => props.categoryId, (newVal) => {
     categoriaSeleccionada.value = newVal
   }
 })
-
-onMounted(() => {
-  datos.value = authStore.user;
-});
 </script>
 
 <template>
@@ -239,7 +288,7 @@ onMounted(() => {
             </button>
           </div>
           <input v-if="datos?.email === 'vendedor'" type="text" id="client-name" v-model="nombreCliente"
-            placeholder="Nombre cliente" class="qt-input" />
+            placeholder="Nombre cliente" class="qt-input" required />
         </div>
       </div>
 
@@ -284,7 +333,7 @@ onMounted(() => {
 }
 
 .qt-input:focus {
-  border-color: #667eea;
+  border-color: #ffd54f;
 }
 
 h3 {
@@ -378,7 +427,7 @@ h3 {
   height: 40px;
   border: none;
   border-radius: 8px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #ffd54f 0%, #8B5E3C 100%);
   color: white;
   font-size: 1.5rem;
   font-weight: bold;
@@ -391,7 +440,7 @@ h3 {
 
 .btn-qty:hover:not(:disabled) {
   transform: scale(1.1);
-  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+  box-shadow: 0 4px 12px rgba(255, 213, 79);
 }
 
 .btn-qty:disabled {
@@ -413,7 +462,7 @@ h3 {
 }
 
 .qty-input:focus {
-  border-color: #667eea;
+  border-color: #dfbc4a;
 }
 
 .selected-badge {

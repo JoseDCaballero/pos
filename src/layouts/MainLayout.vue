@@ -44,6 +44,8 @@ const cerrarSesion = async () => {
 onMounted(() => {
   datos.value = authStore.user;
 
+  leftDrawerOpen.value = false;
+
   //void cargarPedidos()
 
   // Escuchar nuevos pedidos por socket
@@ -97,11 +99,11 @@ onUnmounted(() => {
           Telas Emanuel
         </q-toolbar-title>
 
-        <div v-if="datos">Usuario: {{ datos.email }}</div>
+        <div v-if="datos">{{ datos.email?.toUpperCase() }}</div>
       </q-toolbar>
     </q-header>
 
-    <q-drawer v-model="leftDrawerOpen" show-if-above bordered>
+    <q-drawer v-model="leftDrawerOpen" :show-if-above="false" bordered>
       <q-list>
         <q-item-label header>
           Menú de opciones
@@ -202,8 +204,37 @@ onUnmounted(() => {
       </q-list>
     </q-drawer>
 
-    <q-page-container>
+    <q-page-container class="main-bg">
       <router-view />
     </q-page-container>
   </q-layout>
 </template>
+
+<style scoped>
+/* Fondo principal: amarillo -> blanco -> café */
+.main-bg {
+  background: linear-gradient(135deg, #FFEB99 0%, #FFFFFF 50%, #8B5E3C 100%);
+  min-height: 100vh;
+}
+
+/* Encabezado con tonos cálidos */
+.q-header {
+  background: linear-gradient(90deg, #FFD54F 0%, #8B5E3C 100%) !important;
+  color: #fff;
+}
+
+/* Drawer más claro para contraste */
+.q-drawer {
+  background: linear-gradient(180deg, #FFF8E1 0%, #F5E6D6 100%) !important;
+}
+
+.q-drawer .q-item-label,
+.q-drawer .q-item-section {
+  color: #5a3f2b !important;
+}
+
+.q-toolbar-title {
+  color: #4a2e1a !important;
+  font-weight: 800;
+}
+</style>

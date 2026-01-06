@@ -22,7 +22,7 @@ export interface PedidoBackend {
   id: number;
   comprador: string;
   DetallePedido?: DetallePedidoBackend[];
-  estado: "pendiente" | "completado" | "cancelado";
+  estado: "pendiente" | "pagado" | "cancelado";
   fecha: string;
   total?: number;
   comentarios?: string | null;
@@ -32,7 +32,7 @@ export interface Pedido {
   id?: number;
   comprador: string;
   productos: ProductoPedido[];
-  estado: "pendiente" | "completado" | "cancelado";
+  estado: "pendiente" | "pagado" | "cancelado";
   fecha: string;
   total?: number;
   comentarios?: string | null;
@@ -78,9 +78,11 @@ export const usePedidosStore = defineStore("pedidos", () => {
       });
       pedidos.value.push(response.data);
       return response.data;
-    } catch (err) {
+    } catch (err: unknown) {
       error.value = "Error al crear el pedido";
-      console.error("Error agregando pedido:", err);
+      // Mostrar detalle de la respuesta del servidor si está disponible
+      const maybe = err as { response?: { data?: unknown } };
+      console.error("Error agregando pedido:", err, maybe.response?.data ?? null);
       throw err;
     } finally {
       loading.value = false;

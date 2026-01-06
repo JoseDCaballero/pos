@@ -38,7 +38,16 @@ const login = async () => {
           await router.push('/select');
           break;
         case 'admin':
-          // agregar redirección si aplica
+          try {
+            const adminUrl = (import.meta.env.VITE_ADMIN_URL as string)
+            if (/^https?:\/\//.test(adminUrl)) {
+              window.location.href = adminUrl
+            } else {
+              await router.push(adminUrl)
+            }
+          } catch (e) {
+            return e
+          }
           break;
         default:
           mensajeError.value = 'No debería llegar a este punto pero bueno.';
@@ -68,11 +77,12 @@ const login = async () => {
       <h1>Inicio de sesión</h1>
       <div class="input-group">
         <label for="username">Usuario:</label>
-        <input type="text" id="username" v-model="username" required />
+        <input type="text" id="username" v-model="username" placeholder="Ingresa tu usuario" required />
       </div>
       <div class="input-group password-group">
         <label for="password">Contraseña:</label>
-        <input :type="isPwd ? 'password' : 'text'" id="password" v-model="password" required />
+        <input :type="isPwd ? 'password' : 'text'" id="password" v-model="password" placeholder="Ingresa tu contraseña"
+          required />
         <span @click="isPwd = !isPwd" class="toggle-password"
           :title="isPwd ? 'Mostrar contraseña' : 'Ocultar contraseña'">
           <svg v-if="isPwd" class="eye-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">

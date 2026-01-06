@@ -2,6 +2,7 @@
 import { useQuasar } from 'quasar'
 import { socket } from 'src/boot/socket'
 import { onMounted, onUnmounted, ref } from 'vue'
+import api from 'src/api/axios'
 import { usePedidosStore, type Pedido, type PedidoBackend } from 'src/stores/pedidos-store'
 import { storeToRefs } from 'pinia'
 import { useAuthStore } from 'src/stores/auth'
@@ -30,27 +31,71 @@ const cargarPedidos = async () => {
   }
 }
 
+/*TODO: SEND PAYMENTS TO THE DB FROM THIS FUNCTION*/
+
 const completarPedido = async (pedido: Pedido) => {
   if (!pedido.id) return
 
   try {
-    await pedidosStore.actualizarEstadoPedido(pedido.id, 'completado')
-    $q.notify({
-      message: 'Pedido completado',
-      color: 'positive',
-      icon: 'check_circle',
-      position: 'top'
+    const detallesVenta = (pedido.productos || []).map(p => {
+      const cantidad = typeof p.cantidad === 'string' ? parseFloat(p.cantidad) : Number(p.cantidad)
+      return {
+        producto_id: Number((p as unknown as { productoId: number }).productoId),
+        cantidad,
+        precio_unitario: 0
+      }
     })
-  } catch (error) {
-    console.error('Error completando pedido:', error)
+
+    const total = typeof pedido.total === 'number' ? pedido.total : pedido.total ? parseFloat(String(pedido.total)) : 0
+    const totalCantidad = detallesVenta.reduce((s, d) => s + (Number(d.cantidad) || 0), 0)
+    if (total > 0 && totalCantidad > 0) {
+      const precioPorUnidad = total / totalCantidad
+      detallesVenta.forEach(d => {
+        d.precio_unitario = parseFloat(precioPorUnidad.toFixed(2))
+      })
+    }
+
+    const payload = {
+      cliente: pedido.comprador,
+      total: total,
+      detallesVenta,
+      bodega_id: 1
+    }
+
+    const response = await api.post('ventas', payload)
+
+    if (response && (response.status === 201 || response.status === 200)) {
+      await pedidosStore.actualizarEstadoPedido(pedido.id, 'pagado')
+      $q.notify({
+        message: 'Pedido completado',
+        color: 'positive',
+        icon: 'check_circle',
+        position: 'top'
+      })
+    } else {
+      throw new Error('Respuesta inesperada del servidor')
+    }
+  } catch (err: unknown) {
+    console.error('Error completando pedido:', err)
+    const extractErrorMessage = (e: unknown): string => {
+      if (e instanceof Error) return e.message
+      if (typeof e === 'object' && e !== null) {
+        const maybe = e as { response?: { data?: { error?: string } } }
+        return maybe.response?.data?.error ?? JSON.stringify(maybe)
+      }
+      return String(e)
+    }
+    const msg = extractErrorMessage(err) || 'Error al completar el pedido'
     $q.notify({
-      message: 'Error al completar el pedido',
+      message: msg,
       color: 'negative',
       icon: 'error',
       position: 'top'
     })
   }
 }
+
+/*TODO:*/
 
 const cancelarPedido = async (pedido: Pedido) => {
   if (!pedido.id) return
@@ -90,7 +135,7 @@ const pedidosPendientes = () => {
 }
 
 const pedidosCompletados = () => {
-  return pedidos.value.filter(p => p.estado === 'completado')
+  return pedidos.value.filter(p => p.estado === 'pagado')
 }
 
 const pedidosCancelados = () => {
@@ -280,7 +325,7 @@ onUnmounted(() => {
 
 .btn-refresh {
   padding: 0.75rem 1.5rem;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #ffd54f 0%, #8B5E3C 100%);
   color: white;
   border: none;
   border-radius: 8px;
@@ -431,7 +476,7 @@ onUnmounted(() => {
 }
 
 .pedido-vendedor {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #FFD54F 0%, #8B5E3C 100%);
   color: white;
   padding: 0.25rem 0.75rem;
   border-radius: 12px;
