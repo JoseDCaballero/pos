@@ -11,9 +11,7 @@ export default defineConfig((/* ctx */) => {
     // app boot file (/src/boot)
     // --> boot files are part of "main.js"
     // https://v2.quasar.dev/quasar-cli-vite/boot-files
-    boot: [
-      'socket',
-    ],
+    boot: ['socket'],
 
     // https://v2.quasar.dev/quasar-cli-vite/quasar-config-file#css
     css: ['app.scss'],
@@ -35,8 +33,8 @@ export default defineConfig((/* ctx */) => {
     // Full list of options: https://v2.quasar.dev/quasar-cli-vite/quasar-config-file#build
     build: {
       target: {
-        browser: ['es2022', 'firefox115', 'chrome115', 'safari14'],
-        node: 'node20',
+        browser: ['es2022', 'firefox115', 'chrome108', 'safari14'],
+        node: 'node16',
       },
 
       typescript: {
@@ -97,13 +95,9 @@ export default defineConfig((/* ctx */) => {
       // you can manually specify Quasar components/directives to be available everywhere:
       //
       // components: [],
-      // directives: [],
-
+      directives: ['TouchPan'],
       // Quasar plugins
-      plugins: [
-        'AppVisibility',
-        'Notify',
-      ],
+      plugins: ['AppVisibility', 'Notify'],
     },
 
     // animations: 'all', // --- includes all animations
@@ -174,18 +168,16 @@ export default defineConfig((/* ctx */) => {
     electron: {
       // extendElectronMainConf (esbuildConf) {},
       // extendElectronPreloadConf (esbuildConf) {},
-
       // extendPackageJson (json) {},
-
       // Electron preload scripts (if any) from /src-electron, WITHOUT file extension
       preloadScripts: ['electron-preload'],
 
       // specify the debugging port to use for the Electron app when running in development mode
       inspectPort: 5858,
 
-      bundler: 'packager', // 'packager' or 'builder'
+      bundler: 'builder', // 'packager' or 'builder'
 
-      packager: {
+      /*packager: {
         // https://github.com/electron-userland/electron-packager/blob/master/docs/api.md#options
         // OS X / Mac App Store
         // appBundleId: '',
@@ -194,12 +186,47 @@ export default defineConfig((/* ctx */) => {
         // protocol: 'myapp://path',
         // Windows only
         // win32metadata: { ... }
+        icon: './src-electron/icons/win/icon.ico',
+        extraResource: ['src-electron/icons'],
+      },*/
+
+      packager: {
+        platform: 'win32',
+        arch: 'x64',
+        icon: 'src-electron/icons/win/icon', // Sin extensión
+        overwrite: true,
       },
 
       builder: {
-        // https://www.electron.build/configuration/configuration
-
         appId: 'pos',
+        productName: 'Telas Emanuel App',
+
+        win: {
+          target: [
+            {
+              target: 'nsis',
+              arch: ['x64', 'ia32'], // Soporta 32 y 64 bits
+            },
+            {
+              target: 'portable',
+              arch: ['x64', 'ia32'], // Soporta 32 y 64 bits
+            },
+          ],
+
+          icon: 'src-electron/icons/win/icon.ico',
+
+          artifactName: '${productName}-Setup-${version}.${ext}',
+        },
+
+        nsis: {
+          oneClick: false, // Permite elegir carpeta de instalación
+          allowToChangeInstallationDirectory: true,
+          createDesktopShortcut: true,
+          createStartMenuShortcut: true,
+          shortcutName: 'Telas Emanuel App',
+          installerIcon: 'src-electron/icons/win/icon.ico',
+          uninstallerIcon: 'src-electron/icons/win/icon.ico',
+        },
       },
     },
 

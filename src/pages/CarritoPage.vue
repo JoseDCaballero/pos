@@ -1,217 +1,359 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
-import api from 'src/api/axios'
-import { usePedidosStore } from 'src/stores/pedidos-store'
-import { useQuasar } from 'quasar'
+import { ref, computed, onMounted, watch } from 'vue';
+import api from 'src/api/axios';
+import { usePedidosStore } from 'src/stores/pedidos-store';
+import { useQuasar } from 'quasar';
+import PaymentModal from 'src/components/PaymentModal.vue';
+import { socket } from 'src/boot/socket';
+import type ReceiptPrinter from 'src/components/ReceiptPrinter.vue';
+import type { ReceiptData } from 'src/components/types';
+import { openCashDrawer, simulateCashDrawer } from 'src/utils/cashDrawer';
 
 interface Producto {
-  id: number
-  producto_id?: number
-  nombre?: string
-  precio?: number
-  linea?: string
+  id: number;
+  producto_id?: number | undefined;
+  bodega_id?: number;
+  nombre?: string;
+  precio?: number;
+  precio_tap?: number;
+  medida_ind?: string | undefined;
+  cantidad?: number | undefined;
+}
+
+interface InventarioItem {
+  id: number;
+  bodega_id: number;
+  producto_id?: number;
+  producto?: {
+    id?: number;
+    nombre: string;
+    precio?: number;
+    precio_tap?: number;
+  };
+  cantidad?: number | undefined;
+  precio?: number;
+  precio_tap?: number;
+  medida_ind?: string;
 }
 
 interface ItemCarrito {
-  productoId: number
-  nombre: string
-  cantidad: number
-  medida: string
-  precio?: number
+  productoId: number;
+  bodega_id: number;
+  nombre: string;
+  cantidad: number;
+  medida: string;
+  precio?: number;
+  precio_tap?: number;
+  stock: number;
 }
 
-const $q = useQuasar()
-const pedidosStore = usePedidosStore()
+const $q = useQuasar();
+const pedidosStore = usePedidosStore();
 
-const term = ref('')
-const sugerencias = ref<Producto[]>([])
-const buscando = ref(false)
+const term = ref('');
+const sugerencias = ref<Producto[]>([]);
+const buscando = ref(false);
 
-const carrito = ref<ItemCarrito[]>([])
-const cliente = ref('')
-const enviando = ref(false)
-const showPagoModal = ref(false)
-const montoPagado = ref<number | null>(null)
+const carrito = ref<ItemCarrito[]>([]);
+const cliente = ref('');
+const enviando = ref(false);
+const showPagoModal = ref(false);
+const comentarios = ref('');
+const esPrecioTap = ref(false);
+const receiptPrinter = ref<InstanceType<typeof ReceiptPrinter> | null>(null);
+const currentReceipt = ref<ReceiptData | null>(null);
 
 const buscar = async (valor: string) => {
   if (!valor) {
-    sugerencias.value = []
-    return
+    sugerencias.value = [];
+    return;
   }
-  buscando.value = true
+  buscando.value = true;
   try {
-    const res = await api.get('productos/all')
-    const items: Producto[] = Array.isArray(res.data) ? res.data : (res.data.items ?? [])
-    const q = valor.toLowerCase()
-    sugerencias.value = items.filter(i => (i.nombre ?? '').toLowerCase().includes(q)).slice(0, 12)
+    const res = await api.get('inventarios');
+    const items = Array.isArray(res.data) ? res.data : (res.data.items ?? []);
+
+    const q = valor.toLowerCase();
+
+    // Type definition for the inventory item structure based on ProdsTiePage
+    // CRITICAL: Filter by bodega_id === 1 to prevent phantom products from other bodegas
+    sugerencias.value = (items as InventarioItem[])
+      .filter((p) => p.bodega_id === 1) // Filter by bodega like in ProdsTiePage
+      .filter((p) => {
+        const nombre = p.producto?.nombre ?? '';
+        return nombre.toLowerCase().includes(q);
+      })
+      .map((p) => ({
+        id: p.id,
+        producto_id: p.producto_id ?? p.producto?.id,
+        bodega_id: p.bodega_id, // Include bodega_id for cart tracking
+        nombre: p.producto?.nombre || 'Producto',
+        precio: Number(p.precio ?? p.producto?.precio ?? 0),
+        precio_tap: Number(p.precio_tap ?? p.producto?.precio_tap ?? 0),
+        medida_ind: p.medida_ind || 'X',
+        cantidad: Number(p.cantidad ?? 0),
+      }))
+      .slice(0, 12);
   } catch (err) {
-    console.error('Error buscando productos', err)
-    sugerencias.value = []
+    console.error('Error buscando productos', err);
+    sugerencias.value = [];
   } finally {
-    buscando.value = false
+    buscando.value = false;
   }
-}
+};
 
 const onTermInput = (e: Event) => {
-  const el = e.target as HTMLInputElement | null
-  const v = el ? el.value : ''
-  term.value = v
-  void buscar(v)
-}
+  const el = e.target as HTMLInputElement | null;
+  const v = el ? el.value : '';
+  term.value = v;
+  void buscar(v);
+};
 
 const agregarAlCarrito = (p: Producto) => {
-  const pid = Number(p.producto_id ?? p.id)
-  const existente = carrito.value.find(i => i.productoId === pid)
+  const pid = Number(p.producto_id ?? p.id);
+  const existente = carrito.value.find((i) => i.productoId === pid);
+  const stockDisponible = Number(p.cantidad ?? 0);
+
   if (existente) {
-    existente.cantidad = existente.cantidad + 1
+    if (existente.cantidad < existente.stock) {
+      existente.cantidad = existente.cantidad + 0.5;
+    } else {
+      $q.notify({ message: 'No hay más existencias disponibles', color: 'orange' });
+    }
   } else {
-    const base = { productoId: pid, nombre: p.nombre || 'Producto', cantidad: 1, medida: p.linea }
-    const item = (p.precio !== undefined) ? Object.assign({}, base, { precio: Number(p.precio) }) : base
-    carrito.value.push(item as ItemCarrito)
+    if (stockDisponible <= 0) {
+      $q.notify({ message: 'Producto agotado', color: 'negative' });
+      return;
+    }
+    const item = {
+      productoId: pid,
+      bodega_id: p.bodega_id ?? 1, // Default to bodega 1
+      nombre: p.nombre || 'Producto',
+      cantidad: 0.5,
+      medida: p.medida_ind || 'UNID',
+      stock: stockDisponible,
+      precio: Number(p.precio ?? 0),
+      precio_tap: Number(p.precio_tap ?? 0),
+    };
+    carrito.value.push(item as ItemCarrito);
   }
-  term.value = ''
-  sugerencias.value = []
-}
+  term.value = '';
+  sugerencias.value = [];
+};
 
 const fmt = (v: unknown) => {
-  const n = Number(v)
-  return Number.isFinite(n) ? n.toFixed(2) : '--'
-}
+  const n = Number(v);
+  return Number.isFinite(n) ? n.toFixed(2) : '--';
+};
 
 const quitar = (id: number) => {
-  carrito.value = carrito.value.filter(i => i.productoId !== id)
-}
+  carrito.value = carrito.value.filter((i) => i.productoId !== id);
+};
 
 const actualizarCantidad = (id: number, cantidad: number) => {
-  const it = carrito.value.find(i => i.productoId === id)
-  if (!it) return
-  it.cantidad = cantidad <= 0 ? 0 : cantidad
-}
+  const it = carrito.value.find((i) => i.productoId === id);
+  if (!it) return;
 
-const subtotal = computed(() => carrito.value.reduce((s, i) => s + (Number(i.precio ?? 0) * i.cantidad), 0))
-const impuestos = computed(() => +(subtotal.value * 0.16).toFixed(2))
-const total = computed(() => +(subtotal.value + impuestos.value).toFixed(2))
+  // Validar contra stock
+  const nuevaCantidad = Math.min(cantidad, it.stock);
+  if (cantidad > it.stock) {
+    $q.notify({
+      message: `Solo hay ${it.stock} unidades disponibles`,
+      color: 'orange',
+      position: 'top',
+      timeout: 1000,
+    });
+  }
+
+  it.cantidad = nuevaCantidad <= 0 ? 0 : nuevaCantidad;
+};
+
+const subtotal = computed(() =>
+  carrito.value.reduce((s, i) => {
+    const p = esPrecioTap.value ? Number(i.precio_tap ?? 0) : Number(i.precio ?? 0);
+    return s + p * i.cantidad;
+  }, 0),
+);
+const total = computed(() => +subtotal.value.toFixed(2));
 
 const enviar = async (extra: { comprador?: string } = {}) => {
   if (!carrito.value.length) {
-    $q.notify({ message: 'El carrito está vacío', color: 'warning' })
-    return
+    $q.notify({ message: 'El carrito está vacío', color: 'warning' });
+    return;
   }
-  enviando.value = true
+  enviando.value = true;
   try {
     const pedido = {
       comprador: (extra.comprador ?? cliente.value ?? '').trim() || 'Cliente',
-      productos: carrito.value.map(i => ({ productoId: i.productoId, nombre: i.nombre, cantidad: i.cantidad, medida: i.medida })),
-      estado: 'pendiente' as const
-    }
+      productos: carrito.value.map((i) => ({
+        productoId: i.productoId,
+        nombre: i.nombre,
+        cantidad: i.cantidad,
+        medida: i.medida,
+      })),
+      estado: 'pendiente' as const,
+    };
     // Log payload for debugging server errors
-    console.log('Enviando pedido payload:', pedido)
-    const creado = await pedidosStore.agregarPedido(pedido)
-    $q.notify({ message: 'Pedido creado', color: 'positive' })
-    carrito.value = []
-    cliente.value = ''
-    sessionStorage.removeItem(import.meta.env.VITE_STORAGE_KEY)
-    return creado
+    //console.log('Enviando pedido payload:', pedido)
+    const creado = await pedidosStore.agregarPedido(pedido);
+
+    // Notificar por socket para que otros clientes muestren la notificación
+    socket.emit('nuevo-pedido', creado);
+    $q.notify({ message: 'Cobro exitoso', color: 'positive' });
+    carrito.value = [];
+    cliente.value = '';
+    sessionStorage.removeItem(import.meta.env.VITE_STORAGE_KEY);
+    return creado;
   } catch (err: unknown) {
-    const maybe = err as { response?: { data?: unknown }; message?: string }
-    console.error('Error creando pedido', err, maybe.response?.data ?? null)
-    const data = maybe.response?.data
-    let serverError: string | undefined
-    if (typeof data === 'object' && data !== null && 'error' in data && typeof (data as Record<string, unknown>).error === 'string') {
-      serverError = (data as Record<string, unknown>).error as string
+    const maybe = err as { response?: { data?: unknown }; message?: string };
+    console.error('Error creando pedido', err, maybe.response?.data ?? null);
+    const data = maybe.response?.data;
+    let serverError: string | undefined;
+    if (
+      typeof data === 'object' &&
+      data !== null &&
+      'error' in data &&
+      typeof (data as Record<string, unknown>).error === 'string'
+    ) {
+      serverError = (data as Record<string, unknown>).error as string;
     }
-    const msg = serverError ?? maybe.message ?? 'Error al crear pedido'
-    $q.notify({ message: String(msg), color: 'negative' })
+    const msg = serverError ?? maybe.message ?? 'Error al crear pedido';
+    $q.notify({ message: String(msg), color: 'negative' });
   } finally {
-    enviando.value = false
+    enviando.value = false;
   }
-}
+};
 
 const abrirModalPago = () => {
-  montoPagado.value = Number(total.value) || 0
-  showPagoModal.value = true
-}
+  showPagoModal.value = true;
+};
 
-const cambio = computed(() => {
-  const mp = Number(montoPagado.value ?? 0)
-  return +(mp - Number(total.value) || 0).toFixed(2)
-})
-
-const confirmarPago = async () => {
-  if ((montoPagado.value ?? 0) < Number(total.value)) {
-    $q.notify({ message: 'Monto insuficiente', color: 'negative' })
-    return
-  }
-  showPagoModal.value = false
+const confirmarPago = async (data: { montoPagado: number; comentarios: string; metodoPago: string }) => {
+  showPagoModal.value = false;
+  const { montoPagado: mp, comentarios: cs, metodoPago: mpago } = data;
+  comentarios.value = cs;
   // Construir detallesVenta a partir del carrito antes de enviarlo
-  const detallesVenta = carrito.value.map(i => ({
+  // CRITICAL: Use precio_tap when toggle is active, otherwise use precio
+  const detallesVenta = carrito.value.map((i) => ({
     producto_id: Number(i.productoId),
     cantidad: Number(i.cantidad),
-    precio_unitario: Number(i.precio ?? 0)
-  }))
+    precio_unitario: esPrecioTap.value ? Number(i.precio_tap ?? 0) : Number(i.precio ?? 0),
+  }));
 
   try {
     // Crear pedido en la base de datos
-    const creado = await enviar({ comprador: cliente.value })
+    const creado = await enviar({ comprador: cliente.value });
 
     if (!creado || !creado.id) {
-      throw new Error('No se pudo crear el pedido antes de procesar la venta')
+      throw new Error('No se pudo crear el pedido antes de procesar la venta');
     }
 
     const payload = {
       cliente: cliente.value || 'Cliente',
       total: Number(total.value),
       detallesVenta,
-      bodega_id: 1
-    }
+      bodega_id: 1,
+      comentarios: comentarios.value,
+      metodo_pago: mpago,
+    };
 
-    const resp = await api.post('ventas', payload)
+    /*console.log('--- DEBUG TOTAL ---');
+    console.log('Carrito:', JSON.parse(JSON.stringify(carrito.value)));
+    console.log('Subtotal value:', subtotal.value);
+    console.log('Total computed value:', total.value);
+    console.log('--- DEBUG PRECIO_TAP ---');
+    console.log('esPrecioTap toggle:', esPrecioTap.value);
+    console.log('detallesVenta (with prices):', JSON.parse(JSON.stringify(detallesVenta)));
+    console.log('Payload enviado:', payload);*/
+
+    const resp = await api.post('ventas', payload);
 
     if (resp && (resp.status === 200 || resp.status === 201)) {
       // Marcar pedido como pagado
-      await pedidosStore.actualizarEstadoPedido(creado.id, 'pagado')
-      $q.notify({ message: `Cambio: ${cambio.value.toFixed(2)}`, color: 'info' })
+      await pedidosStore.actualizarEstadoPedido(creado.id, 'pagado');
+      const vuelto = +(mp - Number(total.value)).toFixed(2);
+
+      // Print receipt automatically
+      currentReceipt.value = {
+        cliente: cliente.value || 'Cliente',
+        productos: carrito.value.map(i => ({
+          cantidad: i.cantidad,
+          medida: i.medida,
+          nombre: i.nombre,
+          precio_unitario: esPrecioTap.value ? Number(i.precio_tap ?? 0) : Number(i.precio ?? 0)
+        })),
+        total: Number(total.value),
+        metodoPago: mpago,
+        fecha: new Date().toISOString(),
+        ...(comentarios.value ? { comentarios: comentarios.value } : {}),
+        ...(vuelto > 0 ? { cambio: vuelto } : {})
+      };
+
+      // Trigger print
+      setTimeout(() => {
+        receiptPrinter.value?.print();
+      }, 500);
+
+      // Open cash drawer after successful payment
+      setTimeout(() => {
+        simulateCashDrawer(); // Simulate with sound
+        // Uncomment the line below if you have a real ESC/POS printer connected:
+        openCashDrawer().catch(() => simulateCashDrawer());
+      }, 1500);
+
+      $q.notify({ message: `Cambio: ${vuelto.toFixed(2)}`, color: 'info' });
     } else {
-      throw new Error('Respuesta inesperada del servidor al procesar la venta')
+      throw new Error('Respuesta inesperada del servidor al procesar la venta');
     }
   } catch (err) {
-    console.error('Error procesando pago:', err)
-    const msg = (err instanceof Error) ? err.message : 'Error procesando el pago'
-    $q.notify({ message: msg, color: 'negative' })
+    console.error('Error procesando pago:', err);
+    const msg = err instanceof Error ? err.message : 'Error procesando el pago';
+    $q.notify({ message: msg, color: 'negative' });
   }
-}
+};
 
 const cancelar = () => {
-  carrito.value = []
-  cliente.value = ''
-  sessionStorage.removeItem(import.meta.env.VITE_STORAGE_KEY)
-  $q.notify({ message: 'Pedido cancelado', color: 'info' })
-}
+  carrito.value = [];
+  cliente.value = '';
+  sessionStorage.removeItem(import.meta.env.VITE_STORAGE_KEY);
+  $q.notify({ message: 'Pedido cancelado', color: 'info' });
+};
 
 const guardar = () => {
   try {
-    sessionStorage.setItem(import.meta.env.VITE_STORAGE_KEY, JSON.stringify({ carrito: carrito.value }))
+    sessionStorage.setItem(
+      import.meta.env.VITE_STORAGE_KEY,
+      JSON.stringify({ carrito: carrito.value }),
+    );
   } catch (err) {
-    console.error('Error guardando carrito', err)
+    console.error('Error guardando carrito', err);
   }
-}
+};
 
 const restaurar = () => {
   try {
-    const raw = sessionStorage.getItem(import.meta.env.VITE_STORAGE_KEY)
-    if (!raw) return
-    const data = JSON.parse(raw)
-    carrito.value = data?.carrito || []
-  } catch (err) {
-    console.error('Error restaurando carrito', err)
-  }
-}
+    const raw = sessionStorage.getItem(import.meta.env.VITE_STORAGE_KEY);
+    if (!raw) return;
+    const data = JSON.parse(raw);
+    // CRITICAL: Filter out phantom products from other bodegas when restoring
+    const restoredCart = data?.carrito || [];
+    carrito.value = restoredCart.filter((item: ItemCarrito) => item.bodega_id === 1);
 
-watch(carrito, () => guardar(), { deep: true })
+    // If we filtered out items, save the cleaned cart back to sessionStorage
+    if (restoredCart.length !== carrito.value.length) {
+      console.log(`Filtered out ${restoredCart.length - carrito.value.length} phantom products from sessionStorage`);
+      guardar();
+    }
+  } catch (err) {
+    console.error('Error restaurando carrito', err);
+  }
+};
+
+watch(carrito, () => guardar(), { deep: true });
 
 onMounted(() => {
-  restaurar()
-})
+  restaurar();
+});
 </script>
 
 <template>
@@ -240,9 +382,12 @@ onMounted(() => {
               @click="agregarAlCarrito(producto)">
               <div class="producto-info">
                 <h3 class="producto-nombre">{{ producto.nombre }}</h3>
-                <span class="producto-linea">{{ producto.linea }}</span>
+                <span class="producto-linea">Existencia: {{ producto.cantidad }} {{ producto.medida_ind }}</span>
               </div>
-              <div class="producto-precio">${{ fmt(producto.precio) }}</div>
+              <div class="producto-precio">
+                <span v-if="esPrecioTap" class="price-original">${{ fmt(producto.precio) }}</span>
+                <span>${{ fmt(esPrecioTap ? producto.precio_tap : producto.precio) }}</span>
+              </div>
             </div>
           </div>
 
@@ -267,8 +412,14 @@ onMounted(() => {
       <!-- Columna Central: Carrito -->
       <div class="cart-panel">
         <div class="cart-header">
-          <h2>Carrito de compra</h2>
-          <span class="item-count">{{ carrito.length }} productos</span>
+          <div>
+            <h2>Carrito de compra</h2>
+            <span class="item-count">{{ carrito.length }} productos</span>
+          </div>
+          <div class="header-actions">
+            <q-toggle v-model="esPrecioTap" label="Precio Tapicero" color="brown" left-label
+              class="precio-tap-toggle" />
+          </div>
         </div>
 
         <div class="cart-content">
@@ -276,20 +427,28 @@ onMounted(() => {
             <div v-for="item in carrito" :key="item.productoId" class="cart-item">
               <div class="item-details">
                 <h4 class="item-nombre">{{ item.nombre }}</h4>
-                <span class="item-medida">{{ item.medida }}</span>
+                <!--<span class="item-medida">{{ item.cantidad }} {{ item.medida }}</span>-->
               </div>
 
               <div class="item-controls">
                 <div class="quantity-control">
-                  <button class="qty-btn" @click="actualizarCantidad(item.productoId, item.cantidad - 1)">−</button>
+                  <button class="qty-btn" @click="actualizarCantidad(item.productoId, item.cantidad - 0.5)"
+                    :disabled="item.cantidad <= 0.5">
+                    -
+                  </button>
                   <input type="number" class="qty-input" v-model.number="item.cantidad"
-                    @change="actualizarCantidad(item.productoId, item.cantidad)" min="0" />
-                  <button class="qty-btn" @click="actualizarCantidad(item.productoId, item.cantidad + 1)">+</button>
+                    @change="actualizarCantidad(item.productoId, item.cantidad)" min="0.5" :max="item.stock" />
+                  <span class="item-medida">{{ item.medida }}</span>
+                  <button class="qty-btn" @click="actualizarCantidad(item.productoId, item.cantidad + 0.5)"
+                    :disabled="item.cantidad >= item.stock">
+                    +
+                  </button>
                 </div>
 
                 <div class="item-pricing">
-                  <span class="item-precio">${{ fmt(item.precio) }}</span>
-                  <span class="item-total">${{ fmt(Number(item.precio) * item.cantidad) }}</span>
+                  <span class="item-precio">${{ fmt(esPrecioTap ? item.precio_tap : item.precio) }}</span>
+                  <span class="item-total">${{ fmt((esPrecioTap ? Number(item.precio_tap) : Number(item.precio)) *
+                    item.cantidad) }}</span>
                 </div>
 
                 <button class="delete-btn" @click="quitar(item.productoId)">
@@ -326,10 +485,6 @@ onMounted(() => {
               <span>Subtotal</span>
               <span>${{ subtotal.toFixed(2) }}</span>
             </div>
-            <div class="summary-row">
-              <span>IVA (16%)</span>
-              <span>${{ impuestos.toFixed(2) }}</span>
-            </div>
           </div>
 
           <div class="summary-divider"></div>
@@ -356,73 +511,8 @@ onMounted(() => {
       </div>
     </div>
 
-    <!-- Modal de Pago -->
-    <Transition name="modal">
-      <div v-if="showPagoModal" class="modal-overlay" @click.self="showPagoModal = false">
-        <div class="modal-content">
-          <div class="modal-header">
-            <h3>Procesar pago</h3>
-            <button class="modal-close" @click="showPagoModal = false">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <line x1="18" y1="6" x2="6" y2="18"></line>
-                <line x1="6" y1="6" x2="18" y2="18"></line>
-              </svg>
-            </button>
-          </div>
-
-          <div class="modal-body">
-            <div class="payment-info">
-              <div class="info-row">
-                <span class="info-label">Total a pagar</span>
-                <span class="info-value total-highlight">${{ total.toFixed(2) }}</span>
-              </div>
-
-              <div class="input-group">
-                <label for="monto-pagado">Monto recibido</label>
-                <div class="input-wrapper">
-                  <span class="input-prefix">$</span>
-                  <input id="monto-pagado" type="number" v-model.number="montoPagado" min="0" step="0.01"
-                    class="payment-input" />
-                </div>
-              </div>
-
-              <div class="info-row cambio-row">
-                <span class="info-label">Cambio</span>
-                <span class="info-value" :class="{ 'negative': cambio < 0 }">
-                  ${{ cambio.toFixed(2) }}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          <!--DESDE AQUI COMENZAR A CONSTRUIR LAS OPCIONES DE PAGO-->
-
-          <!--<div class="payment-options">
-            <h4>Opciones de pago</h4>
-            <div class="options-list">
-              <button class="option-btn" @click="montoPagado = total">
-                Efectivo
-              </button>
-              <button class="option-btn" @click="montoPagado = total">
-                Tarjeta
-              </button>
-              <button class="option-btn" @click="montoPagado = total">
-                Transferencia
-              </button>
-            </div>
-          </div>-->
-
-          <div class="modal-footer">
-            <button class="btn-secondary" @click="showPagoModal = false">
-              Cancelar
-            </button>
-            <button class="btn-primary" @click="confirmarPago" :disabled="(montoPagado ?? 0) < total">
-              Confirmar pago
-            </button>
-          </div>
-        </div>
-      </div>
-    </Transition>
+    <PaymentModal v-if="showPagoModal" :show="true" :total="total" :clientName="cliente" :initialComments="comentarios"
+      @close="showPagoModal = false" @confirm="confirmarPago" />
   </main>
 </template>
 
@@ -433,7 +523,7 @@ onMounted(() => {
 
 .pos-container {
   min-height: 100vh;
-  background: linear-gradient(135deg, #FFEB99 0%, #FFFFFF 50%, #8B5E3C 100%);
+  background: linear-gradient(135deg, #ffeb99 0%, #ffffff 50%, #8b5e3c 100%);
   padding: 2rem;
   position: relative;
   overflow: hidden;
@@ -446,7 +536,8 @@ onMounted(() => {
   left: -50%;
   width: 200%;
   height: 200%;
-  background: radial-gradient(circle at 20% 30%, rgba(255, 235, 153, 0.12) 0%, transparent 50%),
+  background:
+    radial-gradient(circle at 20% 30%, rgba(255, 235, 153, 0.12) 0%, transparent 50%),
     radial-gradient(circle at 80% 70%, rgba(139, 94, 60, 0.08) 0%, transparent 50%);
   animation: float 20s ease-in-out infinite;
   pointer-events: none;
@@ -497,7 +588,6 @@ onMounted(() => {
   align-items: center;
 }
 
-
 .search-input {
   width: 100%;
   padding: 0.9rem 1.25rem 0.9rem 3.5rem;
@@ -505,7 +595,10 @@ onMounted(() => {
   border-radius: 14px;
   font-size: 1rem;
   background: linear-gradient(180deg, #ffffff 0%, #f6f8ff 100%);
-  transition: box-shadow 0.25s ease, transform 0.15s ease, border-color 0.15s ease;
+  transition:
+    box-shadow 0.25s ease,
+    transform 0.15s ease,
+    border-color 0.15s ease;
   outline: none;
   box-shadow: 0 6px 20px rgba(139, 94, 60, 0.08);
 }
@@ -516,7 +609,7 @@ onMounted(() => {
 }
 
 .search-input:focus {
-  border-color: #FFD54F;
+  border-color: #ffd54f;
   box-shadow: 0 10px 30px rgba(109, 93, 246, 0.18);
   transform: translateY(-2px);
 }
@@ -526,7 +619,7 @@ onMounted(() => {
   left: 0.9rem;
   top: 50%;
   transform: translateY(-50%);
-  color: #8B5E3C;
+  color: #8b5e3c;
   pointer-events: none;
   background: linear-gradient(135deg, rgba(217, 164, 65, 0.12), rgba(139, 94, 60, 0.06));
   padding: 0.5rem;
@@ -535,13 +628,16 @@ onMounted(() => {
   align-items: center;
   justify-content: center;
   box-shadow: 0 6px 16px rgba(139, 94, 60, 0.07);
-  transition: transform 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+  transition:
+    transform 0.2s ease,
+    color 0.2s ease,
+    box-shadow 0.2s ease;
 }
 
 .search-input:focus+.search-icon {
   color: #fff;
   transform: translateY(-50%) scale(1.05);
-  background: linear-gradient(135deg, #D9A441, #8B5E3C);
+  background: linear-gradient(135deg, #d9a441, #8b5e3c);
   box-shadow: 0 10px 28px rgba(139, 94, 60, 0.22);
 }
 
@@ -562,7 +658,7 @@ onMounted(() => {
 }
 
 .suggestions-container::-webkit-scrollbar-thumb {
-  background: linear-gradient(135deg, #D9A441 0%, #8B5E3C 100%);
+  background: linear-gradient(135deg, #d9a441 0%, #8b5e3c 100%);
   border-radius: 10px;
 }
 
@@ -594,7 +690,7 @@ onMounted(() => {
   left: -100%;
   width: 100%;
   height: 100%;
-  background: linear-gradient(90deg, transparent, rgba(217, 164, 65, 0.10), transparent);
+  background: linear-gradient(90deg, transparent, rgba(217, 164, 65, 0.1), transparent);
   transition: left 0.5s;
 }
 
@@ -603,7 +699,7 @@ onMounted(() => {
 }
 
 .producto-card:hover {
-  border-color: #D9A441;
+  border-color: #d9a441;
   transform: translateY(-4px) scale(1.02);
   box-shadow:
     0 12px 30px rgba(139, 94, 60, 0.18),
@@ -618,7 +714,7 @@ onMounted(() => {
 .producto-nombre {
   font-size: 1rem;
   font-weight: 700;
-  background: linear-gradient(135deg, #D9A441 0%, #8B5E3C 100%);
+  background: linear-gradient(135deg, #d9a441 0%, #8b5e3c 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -630,7 +726,7 @@ onMounted(() => {
 
 .producto-linea {
   font-size: 0.875rem;
-  color: #8B5E3C;
+  color: #8b5e3c;
   font-weight: 500;
   padding: 0.25rem 0.75rem;
   background: rgba(139, 94, 60, 0.06);
@@ -641,7 +737,7 @@ onMounted(() => {
 .producto-precio {
   font-size: 1.25rem;
   font-weight: 800;
-  background: linear-gradient(135deg, #FFE8C2 0%, #D9A441 100%);
+  background: linear-gradient(135deg, #ffe8c2 0%, #d9a441 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -656,7 +752,7 @@ onMounted(() => {
   justify-content: center;
   padding: 3rem 1rem;
   text-align: center;
-  color: #8B5E3C;
+  color: #8b5e3c;
   gap: 1.5rem;
 }
 
@@ -664,7 +760,7 @@ onMounted(() => {
   width: 48px;
   height: 48px;
   border: 4px solid rgba(139, 94, 60, 0.18);
-  border-top-color: #8B5E3C;
+  border-top-color: #8b5e3c;
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
 }
@@ -714,7 +810,7 @@ onMounted(() => {
   margin: 0;
   font-size: 1.75rem;
   font-weight: 800;
-  background: linear-gradient(135deg, #D9A441 0%, #8B5E3C 100%);
+  background: linear-gradient(135deg, #d9a441 0%, #8b5e3c 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -722,7 +818,7 @@ onMounted(() => {
 
 .item-count {
   padding: 0.5rem 1.25rem;
-  background: linear-gradient(135deg, #D9A441 0%, #8B5E3C 100%);
+  background: linear-gradient(135deg, #d9a441 0%, #8b5e3c 100%);
   border-radius: 30px;
   font-size: 0.875rem;
   font-weight: 700;
@@ -760,7 +856,7 @@ onMounted(() => {
 }
 
 .cart-content::-webkit-scrollbar-thumb {
-  background: linear-gradient(135deg, #D9A441 0%, #8B5E3C 100%);
+  background: linear-gradient(135deg, #d9a441 0%, #8b5e3c 100%);
   border-radius: 10px;
 }
 
@@ -787,7 +883,7 @@ onMounted(() => {
   left: 0;
   width: 4px;
   height: 100%;
-  background: linear-gradient(180deg, #D9A441 0%, #8B5E3C 50%, #FFE8C2 100%);
+  background: linear-gradient(180deg, #d9a441 0%, #8b5e3c 50%, #ffe8c2 100%);
   transform: scaleY(0);
   transition: transform 0.3s;
   transform-origin: top;
@@ -798,7 +894,7 @@ onMounted(() => {
 }
 
 .cart-item:hover {
-  border-color: #D9A441;
+  border-color: #d9a441;
   box-shadow:
     0 8px 24px rgba(139, 94, 60, 0.18),
     0 0 0 1px rgba(139, 94, 60, 0.06) inset;
@@ -818,7 +914,7 @@ onMounted(() => {
 
 .item-medida {
   font-size: 0.875rem;
-  color: #8B5E3C;
+  color: #8b5e3c;
   font-weight: 500;
   padding: 0.25rem 0.75rem;
   background: rgba(139, 94, 60, 0.06);
@@ -846,7 +942,7 @@ onMounted(() => {
   width: 40px;
   height: 40px;
   border: none;
-  background: linear-gradient(135deg, #D9A441 0%, #8B5E3C 100%);
+  background: linear-gradient(135deg, #d9a441 0%, #8b5e3c 100%);
   border-radius: 12px;
   cursor: pointer;
   font-size: 1.25rem;
@@ -875,7 +971,7 @@ onMounted(() => {
   background: transparent;
   font-size: 1.125rem;
   font-weight: 700;
-  color: #8B5E3C;
+  color: #8b5e3c;
   outline: none;
 }
 
@@ -895,14 +991,14 @@ onMounted(() => {
 
 .item-precio {
   font-size: 0.875rem;
-  color: #8B5E3C;
+  color: #8b5e3c;
   font-weight: 600;
 }
 
 .item-total {
   font-size: 1.375rem;
   font-weight: 800;
-  background: linear-gradient(135deg, #FFE8C2 0%, #D9A441 100%);
+  background: linear-gradient(135deg, #ffe8c2 0%, #d9a441 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -912,7 +1008,7 @@ onMounted(() => {
   width: 48px;
   height: 48px;
   border: none;
-  background: linear-gradient(135deg, #FF9A8A 0%, #C6862F 100%);
+  background: linear-gradient(135deg, #ff9a8a 0%, #c6862f 100%);
   border-radius: 12px;
   cursor: pointer;
   color: white;
@@ -939,7 +1035,7 @@ onMounted(() => {
   justify-content: center;
   padding: 4rem 2rem;
   text-align: center;
-  color: #8B5E3C;
+  color: #8b5e3c;
   gap: 1.5rem;
 }
 
@@ -965,7 +1061,7 @@ onMounted(() => {
   margin: 0;
   font-size: 1.5rem;
   font-weight: 700;
-  background: linear-gradient(135deg, #D9A441 0%, #8B5E3C 100%);
+  background: linear-gradient(135deg, #d9a441 0%, #8b5e3c 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -1003,7 +1099,7 @@ onMounted(() => {
   margin: 0;
   font-size: 1.5rem;
   font-weight: 800;
-  background: linear-gradient(135deg, #D9A441 0%, #8B5E3C 100%);
+  background: linear-gradient(135deg, #d9a441 0%, #8b5e3c 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -1052,7 +1148,7 @@ onMounted(() => {
 .total-amount {
   font-size: 2.25rem;
   font-weight: 900;
-  background: linear-gradient(135deg, #D9A441 0%, #8B5E3C 50%, #FFE8C2 100%);
+  background: linear-gradient(135deg, #d9a441 0%, #8b5e3c 50%, #ffe8c2 100%);
   -webkit-background-clip: text;
   -webkit-text-fill-color: transparent;
   background-clip: text;
@@ -1095,9 +1191,11 @@ onMounted(() => {
 }
 
 .btn-primary {
-  background: linear-gradient(135deg, #D9A441 0%, #8B5E3C 50%, #FFE8C2 100%);
+  background: linear-gradient(135deg, #d9a441 0%, #8b5e3c 50%, #ffe8c2 100%);
   color: #3d2816;
-  box-shadow: 0 14px 36px rgba(139, 94, 60, 0.22), inset 0 -6px 18px rgba(0, 0, 0, 0.04);
+  box-shadow:
+    0 14px 36px rgba(139, 94, 60, 0.22),
+    inset 0 -6px 18px rgba(0, 0, 0, 0.04);
   letter-spacing: 0.3px;
 }
 
@@ -1111,7 +1209,9 @@ onMounted(() => {
   border-radius: 50%;
   background: rgba(255, 255, 255, 0.3);
   transform: translate(-50%, -50%);
-  transition: width 0.6s, height 0.6s;
+  transition:
+    width 0.6s,
+    height 0.6s;
 }
 
 .btn-primary:hover::before {
@@ -1152,233 +1252,6 @@ onMounted(() => {
   cursor: not-allowed;
 }
 
-/* Modal */
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(217, 164, 65, 0.36);
-  backdrop-filter: blur(12px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-  padding: 2rem;
-  animation: fade-in 0.3s ease-out;
-}
-
-@keyframes fade-in {
-  from {
-    opacity: 0;
-  }
-
-  to {
-    opacity: 1;
-  }
-}
-
-.modal-content {
-  background: linear-gradient(135deg, #ffffff 0%, #f8f9ff 100%);
-  border-radius: 28px;
-  width: 100%;
-  max-width: 520px;
-  box-shadow:
-    0 30px 60px rgba(0, 0, 0, 0.3),
-    0 0 0 1px rgba(255, 255, 255, 0.5) inset;
-  overflow: hidden;
-  border: 2px solid rgba(255, 255, 255, 0.5);
-  animation: modal-enter 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-@keyframes modal-enter {
-  from {
-    opacity: 0;
-    transform: scale(0.9) translateY(20px);
-  }
-
-  to {
-    opacity: 1;
-    transform: scale(1) translateY(0);
-  }
-}
-
-.modal-header {
-  padding: 2rem;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  background: linear-gradient(135deg, #D9A441 0%, #8B5E3C 100%);
-  color: white;
-}
-
-.modal-header h3 {
-  margin: 0;
-  font-size: 1.5rem;
-  font-weight: 800;
-}
-
-.modal-close {
-  width: 44px;
-  height: 44px;
-  border: none;
-  background: rgba(255, 255, 255, 0.2);
-  backdrop-filter: blur(10px);
-  border-radius: 12px;
-  cursor: pointer;
-  color: white;
-  transition: all 0.3s;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.modal-close:hover {
-  background: rgba(255, 255, 255, 0.3);
-  transform: rotate(90deg) scale(1.1);
-}
-
-.modal-body {
-  padding: 2rem;
-}
-
-.payment-info {
-  display: flex;
-  flex-direction: column;
-  gap: 1.75rem;
-}
-
-.info-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 1rem;
-  background: linear-gradient(135deg, #f8f9ff 0%, #f0f2ff 100%);
-  border-radius: 14px;
-  font-size: 1rem;
-  font-weight: 600;
-}
-
-.info-label {
-  color: #6b4b36;
-}
-
-.info-value {
-  font-size: 1.25rem;
-  font-weight: 800;
-  color: #4a3220;
-}
-
-.total-highlight {
-  font-size: 1.75rem;
-  background: linear-gradient(135deg, #D9A441 0%, #8B5E3C 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-
-.input-group {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-}
-
-.input-group label {
-  font-size: 0.875rem;
-  font-weight: 700;
-  color: #8B5E3C;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.input-wrapper {
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-
-.input-prefix {
-  position: absolute;
-  left: 1.5rem;
-  font-size: 1.5rem;
-  font-weight: 800;
-  background: linear-gradient(135deg, #D9A441 0%, #8B5E3C 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-
-.payment-input {
-  width: 100%;
-  padding: 1.25rem 1.5rem 1.25rem 3.5rem;
-  border: 3px solid rgba(217, 164, 65, 0.18);
-  border-radius: 16px;
-  font-size: 1.5rem;
-  font-weight: 800;
-  background: white;
-  color: #4a3220;
-  transition: all 0.3s;
-  outline: none;
-}
-
-.payment-input:focus {
-  border-color: #D9A441;
-  box-shadow:
-    0 4px 20px rgba(139, 94, 60, 0.25),
-    0 0 0 4px rgba(139, 94, 60, 0.1);
-  transform: translateY(-2px);
-}
-
-.cambio-row {
-  background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);
-  border: 2px solid rgba(34, 197, 94, 0.3);
-}
-
-.cambio-row .info-value {
-  background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-
-.cambio-row .info-value.negative {
-  background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-
-.modal-footer {
-  padding: 2rem;
-  display: flex;
-  gap: 1rem;
-  background: rgba(248, 249, 255, 0.5);
-  border-top: 2px solid rgba(217, 164, 65, 0.08);
-}
-
-.modal-footer .btn-primary,
-.modal-footer .btn-secondary {
-  flex: 1;
-}
-
-/* Transiciones del modal */
-.modal-enter-active,
-.modal-leave-active {
-  transition: opacity 0.3s ease;
-}
-
-.modal-enter-from,
-.modal-leave-to {
-  opacity: 0;
-}
-
-.modal-enter-active .modal-content,
-.modal-leave-active .modal-content {
-  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.modal-enter-from .modal-content,
-.modal-leave-to .modal-content {
-  transform: scale(0.9) translateY(20px);
-}
 
 /* Responsive */
 @media (max-width: 1400px) {
@@ -1412,3 +1285,6 @@ onMounted(() => {
   flex-direction: column;
 }*/
 </style>
+
+<!-- Receipt Printer Component (hidden, only for printing) -->
+<ReceiptPrinter ref="receiptPrinter" :data="currentReceipt" />

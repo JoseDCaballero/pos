@@ -1,6 +1,6 @@
-import { defineStore } from "pinia";
-import { ref } from "vue";
-import api from "src/api/axios";
+import { defineStore } from 'pinia';
+import { ref } from 'vue';
+import api from 'src/api/axios';
 
 export interface ProductoPedido {
   productoId: number;
@@ -22,7 +22,7 @@ export interface PedidoBackend {
   id: number;
   comprador: string;
   DetallePedido?: DetallePedidoBackend[];
-  estado: "pendiente" | "pagado" | "cancelado";
+  estado: 'pendiente' | 'pagado' | 'cancelado';
   fecha: string;
   total?: number;
   comentarios?: string | null;
@@ -32,7 +32,7 @@ export interface Pedido {
   id?: number;
   comprador: string;
   productos: ProductoPedido[];
-  estado: "pendiente" | "pagado" | "cancelado";
+  estado: 'pendiente' | 'pagado' | 'cancelado';
   fecha: string;
   total?: number;
   comentarios?: string | null;
@@ -45,7 +45,7 @@ const transformarPedidoBackend = (pedidoBackend: PedidoBackend): Pedido => {
         productoId: detalle.productoId,
         nombre: detalle.nombre,
         cantidad:
-          typeof detalle.cantidad === "string" ? parseFloat(detalle.cantidad) : detalle.cantidad,
+          typeof detalle.cantidad === 'string' ? parseFloat(detalle.cantidad) : detalle.cantidad,
         medida: detalle.medida,
       }))
     : [];
@@ -56,33 +56,31 @@ const transformarPedidoBackend = (pedidoBackend: PedidoBackend): Pedido => {
     productos,
     estado: pedidoBackend.estado,
     fecha: pedidoBackend.fecha,
-    ...(pedidoBackend.total !== undefined ? { total: pedidoBackend.total } : {}),
-    ...(pedidoBackend.comentarios !== undefined
-      ? { comentarios: pedidoBackend.comentarios }
-      : {}),
+    ...(pedidoBackend.total !== undefined ? { total: Number(pedidoBackend.total) } : {}),
+    ...(pedidoBackend.comentarios !== undefined ? { comentarios: pedidoBackend.comentarios } : {}),
   };
 };
 
-export const usePedidosStore = defineStore("pedidos", () => {
+export const usePedidosStore = defineStore('pedidos', () => {
   const pedidos = ref<Pedido[]>([]);
   const loading = ref(false);
   const error = ref<string | null>(null);
 
-  const agregarPedido = async (pedido: Omit<Pedido, "id" | "fecha">) => {
+  const agregarPedido = async (pedido: Omit<Pedido, 'id' | 'fecha'>) => {
     loading.value = true;
     error.value = null;
     try {
-      const response = await api.post("pedidos", {
+      const response = await api.post('pedidos', {
         ...pedido,
         fecha: new Date().toISOString(),
       });
       pedidos.value.push(response.data);
       return response.data;
     } catch (err: unknown) {
-      error.value = "Error al crear el pedido";
+      error.value = 'Error al crear el pedido';
       // Mostrar detalle de la respuesta del servidor si está disponible
       const maybe = err as { response?: { data?: unknown } };
-      console.error("Error agregando pedido:", err, maybe.response?.data ?? null);
+      console.error('Error agregando pedido:', err, maybe.response?.data ?? null);
       throw err;
     } finally {
       loading.value = false;
@@ -93,20 +91,20 @@ export const usePedidosStore = defineStore("pedidos", () => {
     loading.value = true;
     error.value = null;
     try {
-      const response = await api.get("pedidos");
+      const response = await api.get('pedidos');
       // Transformar los pedidos del backend al formato del frontend
       pedidos.value = response.data.map((pedidoBackend: PedidoBackend) =>
         transformarPedidoBackend(pedidoBackend),
       );
     } catch (err) {
-      error.value = "Error al obtener pedidos";
-      console.error("Error obteniendo pedidos:", err);
+      error.value = 'Error al obtener pedidos';
+      console.error('Error obteniendo pedidos:', err);
     } finally {
       loading.value = false;
     }
   };
 
-  const actualizarEstadoPedido = async (id: number, estado: Pedido["estado"]) => {
+  const actualizarEstadoPedido = async (id: number, estado: Pedido['estado']) => {
     loading.value = true;
     error.value = null;
     try {
@@ -117,8 +115,8 @@ export const usePedidosStore = defineStore("pedidos", () => {
         pedidos.value[index] = transformarPedidoBackend(response.data);
       }
     } catch (err) {
-      error.value = "Error al actualizar pedido";
-      console.error("Error actualizando pedido:", err);
+      error.value = 'Error al actualizar pedido';
+      console.error('Error actualizando pedido:', err);
       throw err;
     } finally {
       loading.value = false;
@@ -127,13 +125,37 @@ export const usePedidosStore = defineStore("pedidos", () => {
 
   const agregarPedidoLocal = (pedido: Pedido | PedidoBackend) => {
     // Si el pedido tiene DetallePedido, es del backend y necesita transformación
-    if ("DetallePedido" in pedido) {
+    if ('DetallePedido' in pedido) {
       const pedidoTransformado = transformarPedidoBackend(pedido);
       pedidos.value.push(pedidoTransformado);
     } else {
       pedidos.value.push(pedido as Pedido);
     }
   };
+
+  const actualizarPedido = async (id: number, data: Partial<Pedido>) => {
+    loading.value = true;
+    error.value = null;
+    try {
+      const response = await api.put(`pedidos/${id}`, data);
+      const index = pedidos.value.findIndex((p) => p.id === id);
+      if (index !== -1) {
+        pedidos.value[index] = transformarPedidoBackend(response.data);
+      }
+      return response.data;
+    } catch (err) {
+      error.value = 'Error al actualizar pedido';
+      console.error('Error actualizando pedido:', err);
+      throw err;
+    } finally {
+      loading.value = false;
+    }
+  };
+
+  // Debug log to ensure the store is initialized with the expected methods
+  console.log('--- Pedidos Store Initialized ---', {
+    hasActualizarPedido: typeof actualizarPedido === 'function',
+  });
 
   return {
     pedidos,
@@ -142,6 +164,7 @@ export const usePedidosStore = defineStore("pedidos", () => {
     agregarPedido,
     obtenerPedidos,
     actualizarEstadoPedido,
+    actualizarPedido,
     agregarPedidoLocal,
   };
 });

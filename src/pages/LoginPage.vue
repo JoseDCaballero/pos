@@ -15,7 +15,6 @@ const datos = ref<{ email?: string } | null>(null);
 const login = async () => {
   mensajeError.value = ''
   isLoading.value = true
-  //await router.push('/select');
   try {
     const response = await api.post('usuarios/login', {
       email: username.value,

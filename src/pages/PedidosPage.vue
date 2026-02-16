@@ -1,152 +1,206 @@
 <script setup lang="ts">
-import { useQuasar } from 'quasar'
-import { socket } from 'src/boot/socket'
-import { onMounted, onUnmounted, ref } from 'vue'
-import api from 'src/api/axios'
-import { usePedidosStore, type Pedido, type PedidoBackend } from 'src/stores/pedidos-store'
-import { storeToRefs } from 'pinia'
-import { useAuthStore } from 'src/stores/auth'
+import { useQuasar } from 'quasar';
+import { socket } from 'src/boot/socket';
+import { onMounted, onUnmounted, ref } from 'vue';
+import api from 'src/api/axios';
+import { usePedidosStore, type Pedido, type PedidoBackend } from 'src/stores/pedidos-store';
+import { storeToRefs } from 'pinia';
+import { useAuthStore } from 'src/stores/auth';
+import PaymentModal from 'src/components/PaymentModal.vue';
 
-const $q = useQuasar()
-const pedidosStore = usePedidosStore()
-const { pedidos } = storeToRefs(pedidosStore)
-const cargando = ref(true)
+import { useRouter } from 'vue-router';
+
+const $q = useQuasar();
+const router = useRouter();
+const pedidosStore = usePedidosStore();
+const { pedidos } = storeToRefs(pedidosStore);
+const cargando = ref(true);
 const datos = ref<{ email?: string } | null>(null);
 const authStore = useAuthStore();
 
+const showPagoModal = ref(false);
+const pedidoParaCompletar = ref<Pedido | null>(null);
+
 const cargarPedidos = async () => {
-  cargando.value = true
+  cargando.value = true;
   try {
-    await pedidosStore.obtenerPedidos()
+    await pedidosStore.obtenerPedidos();
+    console.log('--- DEBUG PEDIDOS PAGE ---');
+    console.log('Pedidos cargados:', JSON.parse(JSON.stringify(pedidos.value)));
+    pedidos.value.forEach((p) => {
+      console.log(`Pedido #${p.id} - Total raw:`, p.total, 'Type:', typeof p.total);
+    });
   } catch (error) {
-    console.error('Error cargando pedidos:', error)
+    console.error('Error cargando pedidos:', error);
     $q.notify({
       message: 'Error al cargar los pedidos',
       color: 'negative',
       icon: 'error',
-      position: 'top'
-    })
+      position: 'top',
+    });
   } finally {
-    cargando.value = false
+    cargando.value = false;
   }
-}
+};
 
-/*TODO: SEND PAYMENTS TO THE DB FROM THIS FUNCTION*/
+const completarPedido = (pedido: Pedido) => {
+  console.log('Abriendo modal para pedido:', pedido);
+  if (!pedido.id) return;
+  pedidoParaCompletar.value = pedido;
+  showPagoModal.value = true;
+};
 
-const completarPedido = async (pedido: Pedido) => {
-  if (!pedido.id) return
+const editPedido = (pedido: Pedido) => {
+  if (!pedido.id) return;
+
+  const seleccion = (pedido.productos || []).map(p => ({
+    id: 0, // placeholder for inventory id
+    productoId: p.productoId,
+    cantidadPedido: Number(p.cantidad),
+    nombre: p.nombre,
+    precio: 0,
+    medida: p.medida
+  }));
+
+  const payload = {
+    nombreCliente: pedido.comprador,
+    seleccion,
+    editOrderId: pedido.id
+  };
+
+  sessionStorage.setItem('pedido_temp', JSON.stringify(payload));
+  void router.push('/tienda');
+};
+
+const confirmarPago = async (data: { montoPagado: number; comentarios: string; metodoPago: string }) => {
+  console.log('Confirmando pago con data:', data);
+  if (!pedidoParaCompletar.value || !pedidoParaCompletar.value.id) {
+    console.error('No hay pedido para completar seleccionado');
+    return;
+  }
+
+  const pedido = pedidoParaCompletar.value;
+  showPagoModal.value = false;
 
   try {
-    const detallesVenta = (pedido.productos || []).map(p => {
-      const cantidad = typeof p.cantidad === 'string' ? parseFloat(p.cantidad) : Number(p.cantidad)
+    const detallesVenta = (pedido.productos || []).map((p) => {
+      const cantidad = typeof p.cantidad === 'string' ? parseFloat(p.cantidad) : Number(p.cantidad);
       return {
-        producto_id: Number((p as unknown as { productoId: number }).productoId),
+        producto_id: Number(p.productoId),
         cantidad,
-        precio_unitario: 0
-      }
-    })
+        precio_unitario: 0,
+      };
+    });
 
-    const total = typeof pedido.total === 'number' ? pedido.total : pedido.total ? parseFloat(String(pedido.total)) : 0
-    const totalCantidad = detallesVenta.reduce((s, d) => s + (Number(d.cantidad) || 0), 0)
+    const total =
+      typeof pedido.total === 'number'
+        ? pedido.total
+        : pedido.total
+          ? parseFloat(String(pedido.total))
+          : 0;
+    const totalCantidad = detallesVenta.reduce((s, d) => s + (Number(d.cantidad) || 0), 0);
     if (total > 0 && totalCantidad > 0) {
-      const precioPorUnidad = total / totalCantidad
-      detallesVenta.forEach(d => {
-        d.precio_unitario = parseFloat(precioPorUnidad.toFixed(2))
-      })
+      const precioPorUnidad = total / totalCantidad;
+      detallesVenta.forEach((d) => {
+        d.precio_unitario = parseFloat(precioPorUnidad.toFixed(2));
+      });
     }
 
     const payload = {
       cliente: pedido.comprador,
       total: total,
       detallesVenta,
-      bodega_id: 1
-    }
+      bodega_id: 1,
+      comentarios: data.comentarios,
+      metodo_pago: data.metodoPago
+    };
 
-    const response = await api.post('ventas', payload)
+    const response = await api.post('ventas', payload);
 
     if (response && (response.status === 201 || response.status === 200)) {
-      await pedidosStore.actualizarEstadoPedido(pedido.id, 'pagado')
+      await pedidosStore.actualizarEstadoPedido(pedido.id!, 'pagado');
+      const vuelto = data.montoPagado - total;
       $q.notify({
-        message: 'Pedido completado',
+        message: `Pedido completado. Cambio: $${vuelto.toFixed(2)}`,
         color: 'positive',
         icon: 'check_circle',
-        position: 'top'
-      })
+        position: 'top',
+      });
     } else {
-      throw new Error('Respuesta inesperada del servidor')
+      throw new Error('Respuesta inesperada del servidor');
     }
   } catch (err: unknown) {
-    console.error('Error completando pedido:', err)
+    console.error('Error completando pedido:', err);
     const extractErrorMessage = (e: unknown): string => {
-      if (e instanceof Error) return e.message
+      if (e instanceof Error) return e.message;
       if (typeof e === 'object' && e !== null) {
-        const maybe = e as { response?: { data?: { error?: string } } }
-        return maybe.response?.data?.error ?? JSON.stringify(maybe)
+        const maybe = e as { response?: { data?: { error?: string } } };
+        return maybe.response?.data?.error ?? JSON.stringify(maybe);
       }
-      return String(e)
-    }
-    const msg = extractErrorMessage(err) || 'Error al completar el pedido'
+      return String(e);
+    };
+    const msg = extractErrorMessage(err) || 'Error al completar el pedido';
     $q.notify({
       message: msg,
       color: 'negative',
       icon: 'error',
-      position: 'top'
-    })
+      position: 'top',
+    });
+  } finally {
+    pedidoParaCompletar.value = null;
   }
-}
-
-/*TODO:*/
+};
 
 const cancelarPedido = async (pedido: Pedido) => {
-  if (!pedido.id) return
+  if (!pedido.id) return;
 
   try {
-    await pedidosStore.actualizarEstadoPedido(pedido.id, 'cancelado')
+    await pedidosStore.actualizarEstadoPedido(pedido.id, 'cancelado');
     $q.notify({
       message: 'Pedido cancelado',
       color: 'warning',
       icon: 'cancel',
-      position: 'top'
-    })
+      position: 'top',
+    });
   } catch (error) {
-    console.error('Error cancelando pedido:', error)
+    console.error('Error cancelando pedido:', error);
     $q.notify({
       message: 'Error al cancelar el pedido',
       color: 'negative',
       icon: 'error',
-      position: 'top'
-    })
+      position: 'top',
+    });
   }
-}
+};
 
 const formatearFecha = (fecha: string) => {
-  const date = new Date(fecha)
+  const date = new Date(fecha);
   return date.toLocaleString('es-ES', {
     day: '2-digit',
     month: '2-digit',
     year: 'numeric',
     hour: '2-digit',
-    minute: '2-digit'
-  })
-}
+    minute: '2-digit',
+  });
+};
 
 const pedidosPendientes = () => {
-  return pedidos.value.filter(p => p.estado === 'pendiente')
-}
+  return pedidos.value.filter((p) => p.estado === 'pendiente');
+};
 
 const pedidosCompletados = () => {
-  return pedidos.value.filter(p => p.estado === 'pagado')
-}
+  return pedidos.value.filter((p) => p.estado === 'pagado');
+};
 
 const pedidosCancelados = () => {
-  return pedidos.value.filter(p => p.estado === 'cancelado')
-}
+  return pedidos.value.filter((p) => p.estado === 'cancelado');
+};
 
 onMounted(() => {
   datos.value = authStore.user;
 
   // Cargar pedidos existentes
-  void cargarPedidos()
+  void cargarPedidos();
 
   // Escuchar nuevos pedidos por socket
   /*socket.on('orden-recibida', (pedido: Pedido) => {
@@ -166,25 +220,25 @@ onMounted(() => {
 
   // Escuchar actualizaciones de pedidos
   socket.on('pedido-actualizado', (pedido: Pedido | PedidoBackend) => {
-    console.log('Pedido actualizado:', pedido)
-    const index = pedidos.value.findIndex(p => p.id === pedido.id)
+    console.log('Pedido actualizado:', pedido);
+    const index = pedidos.value.findIndex((p) => p.id === pedido.id);
     if (index !== -1) {
       // Si tiene DetallePedido, necesita transformación
       if ('DetallePedido' in pedido) {
-        pedidosStore.agregarPedidoLocal(pedido)
+        pedidosStore.agregarPedidoLocal(pedido);
         // Remover el pedido antiguo
-        pedidos.value.splice(index, 1)
+        pedidos.value.splice(index, 1);
       } else {
-        pedidos.value[index] = pedido as Pedido
+        pedidos.value[index] = pedido as Pedido;
       }
     }
-  })
-})
+  });
+});
 
 onUnmounted(() => {
   //socket.off('orden-recibida')
-  socket.off('pedido-actualizado')
-})
+  socket.off('pedido-actualizado');
+});
 </script>
 
 <template>
@@ -227,13 +281,15 @@ onUnmounted(() => {
                 </li>
               </ul>
             </div>
+            <p class="pedido-total">Total: ${{ Number(pedido.total || 0).toFixed(2) }}</p>
             <div class="pedido-actions">
               <button v-if="datos?.email === 'caja'" @click="completarPedido(pedido)" class="btn-complete">
                 ✓ Completar
               </button>
-              <button @click="cancelarPedido(pedido)" class="btn-cancel">
-                ✕ Cancelar
+              <button v-if="datos?.email !== 'caja'" @click="editPedido(pedido)" class="btn-edit">
+                ✎ Editar
               </button>
+              <button @click="cancelarPedido(pedido)" class="btn-cancel">✕ Cancelar</button>
             </div>
           </div>
         </div>
@@ -263,6 +319,7 @@ onUnmounted(() => {
                 </li>
               </ul>
             </div>
+            <p class="pedido-total">Total: ${{ Number(pedido.total || 0).toFixed(2) }}</p>
             <div class="status-badge completed-badge">✓ Completado</div>
           </div>
         </div>
@@ -289,11 +346,16 @@ onUnmounted(() => {
                 </li>
               </ul>
             </div>
+            <p class="pedido-total">Total: ${{ Number(pedido.total || 0).toFixed(2) }}</p>
             <div class="status-badge cancelled-badge">✕ Cancelado</div>
           </div>
         </div>
       </section>
     </div>
+
+    <PaymentModal v-if="showPagoModal" :show="true" :total="Number(pedidoParaCompletar?.total || 0)"
+      :clientName="pedidoParaCompletar?.comprador" :initialComments="pedidoParaCompletar?.comentarios || ''"
+      @close="showPagoModal = false" @confirm="confirmarPago" />
   </main>
 </template>
 
@@ -325,7 +387,7 @@ onUnmounted(() => {
 
 .btn-refresh {
   padding: 0.75rem 1.5rem;
-  background: linear-gradient(135deg, #ffd54f 0%, #8B5E3C 100%);
+  background: linear-gradient(135deg, #ffd54f 0%, #8b5e3c 100%);
   color: white;
   border: none;
   border-radius: 8px;
@@ -413,7 +475,7 @@ onUnmounted(() => {
 }
 
 .badge-completed {
-  background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
+  background: linear-gradient(135deg, #4caf50 0%, #45a049 100%);
 }
 
 .badge-cancelled {
@@ -448,7 +510,7 @@ onUnmounted(() => {
 }
 
 .pedido-card.completed {
-  border-left-color: #4CAF50;
+  border-left-color: #4caf50;
   opacity: 0.8;
 }
 
@@ -476,7 +538,7 @@ onUnmounted(() => {
 }
 
 .pedido-vendedor {
-  background: linear-gradient(135deg, #FFD54F 0%, #8B5E3C 100%);
+  background: linear-gradient(135deg, #ffd54f 0%, #8b5e3c 100%);
   color: white;
   padding: 0.25rem 0.75rem;
   border-radius: 12px;
@@ -521,6 +583,16 @@ onUnmounted(() => {
 }
 
 .btn-complete,
+.btn-edit {
+  background: linear-gradient(135deg, #2196f3 0%, #1976d2 100%);
+  color: white;
+}
+
+.btn-edit:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(33, 150, 243, 0.4);
+}
+
 .btn-cancel {
   flex: 1;
   padding: 0.75rem;
@@ -533,7 +605,7 @@ onUnmounted(() => {
 }
 
 .btn-complete {
-  background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
+  background: linear-gradient(135deg, #4caf50 0%, #45a049 100%);
   color: white;
 }
 
@@ -562,7 +634,7 @@ onUnmounted(() => {
 }
 
 .completed-badge {
-  background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%);
+  background: linear-gradient(135deg, #4caf50 0%, #45a049 100%);
   color: white;
 }
 
@@ -585,5 +657,15 @@ onUnmounted(() => {
   .pedidos-grid {
     grid-template-columns: 1fr;
   }
+}
+
+.pedido-total {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: #333;
+  margin: 1rem 0;
+  text-align: right;
+  border-top: 1px solid #eee;
+  padding-top: 0.5rem;
 }
 </style>

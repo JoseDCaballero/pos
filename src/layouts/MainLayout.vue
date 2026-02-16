@@ -42,6 +42,11 @@ const cerrarSesion = async () => {
 // }
 
 onMounted(() => {
+  // Solicitar permiso para notificaciones del sistema
+  if ('Notification' in window && Notification.permission !== 'granted' && Notification.permission !== 'denied') {
+    void Notification.requestPermission();
+  }
+
   datos.value = authStore.user;
 
   leftDrawerOpen.value = false;
@@ -64,6 +69,18 @@ onMounted(() => {
         { label: 'Ver', color: 'white', handler: () => { void router.push('/caja') } }
       ]
     })
+
+    // Notificación del sistema
+    if ('Notification' in window && Notification.permission === 'granted') {
+      const notification = new Notification('¡Nuevo pedido!', {
+        body: `Pedido recibido de ${comprador}`,
+        icon: '/icons/128x128.png',
+      });
+      notification.onclick = () => {
+        window.focus();
+        void router.push('/caja');
+      };
+    }
   })
 
   // Escuchar actualizaciones de pedidos
@@ -142,6 +159,15 @@ onUnmounted(() => {
             </q-item-section>
             <q-item-section>
               <q-item-label>Pedidos</q-item-label>
+            </q-item-section>
+          </q-item>
+
+          <q-item clickable to="/corte">
+            <q-item-section avatar>
+              <q-icon name="point_of_sale" />
+            </q-item-section>
+            <q-item-section>
+              <q-item-label>Corte de Caja</q-item-label>
             </q-item-section>
           </q-item>
 

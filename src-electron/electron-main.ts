@@ -1,12 +1,17 @@
 import { app, BrowserWindow } from 'electron';
 import path from 'path';
 import os from 'os';
-import { fileURLToPath } from 'url'
+import { fileURLToPath } from 'url';
 
 // needed in case process is undefined under Linux
 const platform = process.platform || os.platform();
 
 const currentDir = fileURLToPath(new URL('.', import.meta.url));
+
+// Para que las notificaciones funcionen en Windows, necesitamos un ID de modelo de usuario
+if (process.platform === 'win32') {
+  app.setAppUserModelId('TelasEmanuel');
+}
 
 let mainWindow: BrowserWindow | undefined;
 
@@ -15,7 +20,10 @@ async function createWindow() {
    * Initial window options
    */
   mainWindow = new BrowserWindow({
-    icon: path.resolve(currentDir, 'icons/icon.png'), // tray icon
+    icon: path.resolve(
+      currentDir,
+      process.env.DEV ? '../../src-electron/icons/win/icon.ico' : 'icons/win/icon.ico',
+    ), // tray icon
     width: 1000,
     height: 600,
     useContentSize: true,
@@ -24,7 +32,10 @@ async function createWindow() {
       // More info: https://v2.quasar.dev/quasar-cli-vite/developing-electron-apps/electron-preload-script
       preload: path.resolve(
         currentDir,
-        path.join(process.env.QUASAR_ELECTRON_PRELOAD_FOLDER, 'electron-preload' + process.env.QUASAR_ELECTRON_PRELOAD_EXTENSION)
+        path.join(
+          process.env.QUASAR_ELECTRON_PRELOAD_FOLDER,
+          'electron-preload' + process.env.QUASAR_ELECTRON_PRELOAD_EXTENSION,
+        ),
       ),
     },
   });

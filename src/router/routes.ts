@@ -10,6 +10,7 @@ import {
   LoginPage,
   PedidosPage,
   CarritoPage,
+  CortePage,
 } from "../pages/index";
 
 const routes: RouteRecordRaw[] = [
@@ -90,6 +91,14 @@ const routes: RouteRecordRaw[] = [
     component: CarritoPage,
     meta: {
       title: "Carrito de Compras",
+      layout: MainLayout,
+    },
+  },
+  {
+    path: "/corte",
+    component: CortePage,
+    meta: {
+      title: "Corte de Caja",
       layout: MainLayout,
     },
   },
