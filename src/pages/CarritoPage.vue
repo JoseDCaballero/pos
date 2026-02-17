@@ -5,7 +5,7 @@ import { usePedidosStore } from 'src/stores/pedidos-store';
 import { useQuasar } from 'quasar';
 import PaymentModal from 'src/components/PaymentModal.vue';
 import { socket } from 'src/boot/socket';
-import type ReceiptPrinter from 'src/components/ReceiptPrinter.vue';
+import ReceiptPrinter from 'src/components/ReceiptPrinter.vue';
 import type { ReceiptData } from 'src/components/types';
 import { openCashDrawer, simulateCashDrawer } from 'src/utils/cashDrawer';
 
@@ -232,6 +232,20 @@ const confirmarPago = async (data: { montoPagado: number; comentarios: string; m
   showPagoModal.value = false;
   const { montoPagado: mp, comentarios: cs, metodoPago: mpago } = data;
   comentarios.value = cs;
+  
+  // IMPORTANTE: Capturar los datos del carrito ANTES de que se limpien
+  const productosParaRecibo = carrito.value.map(i => ({
+    cantidad: i.cantidad,
+    medida: i.medida,
+    nombre: i.nombre,
+    precio_unitario: esPrecioTap.value ? Number(i.precio_tap ?? 0) : Number(i.precio ?? 0)
+  }));
+  
+  const totalParaRecibo = Number(total.value); // Capturar ANTES de limpiar
+  
+  console.log('📦 Productos capturados para el recibo:', productosParaRecibo);
+  console.log('💰 Total capturado:', totalParaRecibo);
+  
   // Construir detallesVenta a partir del carrito antes de enviarlo
   // CRITICAL: Use precio_tap when toggle is active, otherwise use precio
   const detallesVenta = carrito.value.map((i) => ({
@@ -257,41 +271,35 @@ const confirmarPago = async (data: { montoPagado: number; comentarios: string; m
       metodo_pago: mpago,
     };
 
-    /*console.log('--- DEBUG TOTAL ---');
-    console.log('Carrito:', JSON.parse(JSON.stringify(carrito.value)));
-    console.log('Subtotal value:', subtotal.value);
-    console.log('Total computed value:', total.value);
-    console.log('--- DEBUG PRECIO_TAP ---');
-    console.log('esPrecioTap toggle:', esPrecioTap.value);
-    console.log('detallesVenta (with prices):', JSON.parse(JSON.stringify(detallesVenta)));
-    console.log('Payload enviado:', payload);*/
-
     const resp = await api.post('ventas', payload);
 
     if (resp && (resp.status === 200 || resp.status === 201)) {
       // Marcar pedido como pagado
       await pedidosStore.actualizarEstadoPedido(creado.id, 'pagado');
-      const vuelto = +(mp - Number(total.value)).toFixed(2);
+      const vuelto = +(mp - totalParaRecibo).toFixed(2);
 
-      // Print receipt automatically
-      currentReceipt.value = {
+      // Print receipt automatically - Usar los datos capturados ANTES de limpiar el carrito
+      const reciboDatos: ReceiptData = {
         cliente: cliente.value || 'Cliente',
-        productos: carrito.value.map(i => ({
-          cantidad: i.cantidad,
-          medida: i.medida,
-          nombre: i.nombre,
-          precio_unitario: esPrecioTap.value ? Number(i.precio_tap ?? 0) : Number(i.precio ?? 0)
-        })),
-        total: Number(total.value),
+        productos: productosParaRecibo,
+        total: totalParaRecibo,
         metodoPago: mpago,
         fecha: new Date().toISOString(),
         ...(comentarios.value ? { comentarios: comentarios.value } : {}),
         ...(vuelto > 0 ? { cambio: vuelto } : {})
       };
+      
+      console.log('📋 Datos del recibo:', reciboDatos);
+      currentReceipt.value = reciboDatos;
 
       // Trigger print
       setTimeout(() => {
-        receiptPrinter.value?.print();
+        if (receiptPrinter.value) {
+          console.log('🖨️ Llamando a print()...')
+          receiptPrinter.value.print()
+        } else {
+          console.error('❌ ReceiptPrinter no está disponible')
+        }
       }, 500);
 
       // Open cash drawer after successful payment
@@ -513,6 +521,9 @@ onMounted(() => {
 
     <PaymentModal v-if="showPagoModal" :show="true" :total="total" :clientName="cliente" :initialComments="comentarios"
       @close="showPagoModal = false" @confirm="confirmarPago" />
+    
+    <!-- Receipt Printer Component (hidden, only for printing) -->
+    <ReceiptPrinter ref="receiptPrinter" :data="currentReceipt" />
   </main>
 </template>
 
@@ -1285,6 +1296,3 @@ onMounted(() => {
   flex-direction: column;
 }*/
 </style>
-
-<!-- Receipt Printer Component (hidden, only for printing) -->
-<ReceiptPrinter ref="receiptPrinter" :data="currentReceipt" />

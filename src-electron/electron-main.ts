@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, ipcMain } from 'electron';
 import path from 'path';
 import os from 'os';
 import { fileURLToPath } from 'url';
@@ -61,6 +61,79 @@ async function createWindow() {
   });
 }
 
+/*ipcMain.handle('print-ticket', async (event, html: string) => {
+  const win = new BrowserWindow({ show: false })
+  await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+  
+  // Obtener lista de impresoras
+  const printers = await win.webContents.getPrintersAsync()
+  console.log('Impresoras disponibles:', printers)
+  
+  // Buscar impresora térmica (ajusta el nombre según tu impresora)
+  const thermalPrinter = printers.find(p => 
+    p.name.toLowerCase().includes('pos') || 
+    p.name.toLowerCase().includes('thermal') ||
+    p.name.toLowerCase().includes('ticket')
+  )
+  
+  const options = {
+    silent: true,
+    deviceName: thermalPrinter?.name || printers[0]?.name || '',
+    margins: { marginType: 'none' as const },
+    pageSize: { width: 80000, height: 297000 },
+    printBackground: true
+  }
+
+  win.webContents.print(options)
+  win.close()
+  return { success: true }
+})*/
+
+ipcMain.handle('print-ticket', async (event, html: string) => {
+  const win = new BrowserWindow({
+    show: false,
+    webPreferences: {
+      nodeIntegration: false
+    }
+  })
+
+  await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+  
+  // Configuración de impresión para tickets de 80mm
+  const options: Parameters<typeof win.webContents.print>[0] = {
+    silent: true, // Imprimir sin diálogo
+    margins: {
+      marginType: 'none' as const
+    },
+    pageSize: {
+      width: 80000, // 80mm en micrones
+      height: 297000 // Altura auto (largo)
+    },
+    printBackground: true,
+    deviceName: '' // Usar impresora predeterminada, o especifica el nombre
+  }
+
+  try {
+    // print() no es async, pero necesitamos dar tiempo para que se procese
+    win.webContents.print(options, () => {
+      // Cerrar la ventana después de que se complete la impresión
+      setTimeout(() => {
+        if (!win.isDestroyed()) {
+          win.close()
+        }
+      }, 1000)
+    })
+    
+    return { success: true }
+  } catch (error) {
+    console.error('Error printing:', error)
+    if (!win.isDestroyed()) {
+      win.close()
+    }
+    throw error
+  }
+})
+
 void app.whenReady().then(createWindow);
 
 app.on('window-all-closed', () => {
@@ -74,3 +147,42 @@ app.on('activate', () => {
     void createWindow();
   }
 });
+
+/*
+ipcMain.handle('print-ticket', async (event, html: string) => {
+  const win = new BrowserWindow({
+    show: false,
+    webPreferences: {
+      nodeIntegration: false
+    }
+  })
+
+  await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+  
+  // Configuración de impresión para tickets de 80mm
+  const options = {
+    silent: true, // Imprimir sin diálogo
+    margins: {
+      marginType: 'none'
+    },
+    pageSize: {
+      width: 80000, // 80mm en micrones
+      height: 297000 // Altura auto (largo)
+    },
+    printBackground: true,
+    deviceName: '' // Usar impresora predeterminada, o especifica el nombre
+  }
+
+  try {
+    await win.webContents.print(options)
+    win.close()
+    return { success: true }
+  } catch (error) {
+    console.error('Error printing:', error)
+    win.close()
+    throw error
+  }
+})
+
+app.whenReady().then(createWindow)
+*/

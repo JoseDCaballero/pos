@@ -1,135 +1,148 @@
 <script setup lang="ts">
-import printJS from 'print-js';
-import type { ReceiptData } from './types';
-import logoImg from '/public/icons/96x96.png?url';
+import type { ReceiptData } from './types'
+import logoImg from '/icons/96x96.png?url'
 
 const props = defineProps<{
-  data: ReceiptData | null;
-}>();
+  data: ReceiptData | null
+}>()
 
-const emit = defineEmits<{
-  (e: 'printed'): void;
-}>();
-
-// Store info - these can be customized later
 const storeInfo = {
   name: 'TELAS EMANUEL',
   address: 'AV. JOSÉ LÓPEZ PORTILLO MZA 101 LT 11 SM 94, CANCÚN, Q. ROO',
-  phone: 'Teléfono: (998) 702 2579',
-};
+  phone: 'Teléfono: (998) 702 2579'
+}
 
-const print = () => {
-  if (!props.data) return;
-
-  const receiptHTML = generateReceiptHTML(props.data);
-
-  printJS({
-    printable: receiptHTML,
-    type: 'raw-html',
-    style: `
-      @media print {
-        body { margin: 0; padding: 0; }
-        .receipt {
-          font-family: 'Courier New', monospace;
-          width: 80mm;
-          font-size: 12px;
-          line-height: 1.4;
-        }
-        .center { text-align: center; }
-        .bold { font-weight: bold; }
-        .separator { border-top: 1px dashed #000; margin: 8px 0; }
-        .row { display: flex; justify-content: space-between; margin: 4px 0; }
-        .total-row { font-size: 14px; font-weight: bold; margin-top: 8px; }
-        .header { font-size: 16px; font-weight: bold; margin-bottom: 4px; }
-        .logo { margin-bottom: 10px; }
-        .logo img { width: 60px; height: 60px; }
-      }
-    `,
-    onPrintDialogClose: () => {
-      emit('printed');
-    }
-  });
-};
-
-const generateReceiptHTML = (data: ReceiptData): string => {
-  const formatDate = (dateStr: string) => {
-    const d = new Date(dateStr);
-    return d.toLocaleString('es-MX', {
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  };
-
-  const productsHTML = data.productos.map(p => `
-    <div class="row">
-      <div>${p.cantidad} ${p.medida} x ${p.nombre}</div>
-    </div>
-    <div class="row">
-      <div></div>
-      <div>$${(p.precio_unitario * p.cantidad).toFixed(2)}</div>
-    </div>
-  `).join('');
+const generateReceiptHTML = (data: ReceiptData) => {
+  console.log('🎟️ Generando recibo con datos:', data)
+  console.log('📦 Productos en el recibo:', data.productos)
+  
+  const products = data.productos.map(p => `
+    <tr>
+      <td colspan="3"><b>${p.nombre}</b></td>
+    </tr>
+    <tr>
+      <td>${p.cantidad} ${p.medida}</td>
+      <td>@ $${p.precio_unitario.toFixed(2)}</td>
+      <td style="text-align:right"><b>$${(p.precio_unitario * p.cantidad).toFixed(2)}</b></td>
+    </tr>
+  `).join("")
 
   return `
-    <div class="receipt">
-      <div class="center logo">
-        <img src="${logoImg}" alt="Logo">
+  <html>
+    <head>
+      <style>
+        @page {
+          size: 80mm auto;
+          margin: 0;
+        }
+
+        body {
+          font-family: monospace;
+          font-size: 12px;
+          width: 80mm;
+          margin: 0;
+          padding: 0;
+        }
+
+        .center { text-align: center; }
+        .line { border-top: 1px dashed black; margin: 6px 0; }
+
+        table {
+          width: 100%;
+          border-collapse: collapse;
+        }
+
+        td {
+          padding: 2px 0;
+        }
+
+        .total {
+          font-size: 14px;
+          font-weight: bold;
+        }
+      </style>
+    </head>
+
+    <body>
+      <div class="center">
+        <img src="${logoImg}" width="60" />
+        <h3>${storeInfo.name}</h3>
+        <div>${storeInfo.address}</div>
+        <div>${storeInfo.phone}</div>
       </div>
-      <div class="center header">${storeInfo.name}</div>
-      <div class="center">${storeInfo.address}</div>
-      <div class="center">${storeInfo.phone}</div>
-      <div class="separator"></div>
 
-      <div class="row">
-        <div>FECHA:</div>
-        <div>${formatDate(data.fecha)}</div>
-      </div>
-      <div class="row">
-        <div>CLIENTE:</div>
-        <div>${data.cliente.toUpperCase()}</div>
-      </div>
-      <div class="row">
-        <div>MÉTODO DE PAGO:</div>
-        <div>${data.metodoPago}</div>
-      </div>
+      <div class="line"></div>
 
-      <div class="separator"></div>
-      <div class="bold">PRODUCTOS:</div>
-      ${productsHTML}
+      <div>FECHA: ${data.fecha}</div>
+      <div>CLIENTE: ${data.cliente}</div>
+      <div>PAGO: ${data.metodoPago}</div>
 
-      <div class="separator"></div>
-      <div class="row total-row">
-        <div>TOTAL:</div>
-        <div>$${data.total.toFixed(2)}</div>
+      <div class="line"></div>
+
+      <table>
+        ${products}
+      </table>
+
+      <div class="line"></div>
+
+      <div class="total">
+        TOTAL: $${data.total.toFixed(2)}
       </div>
 
-      ${data.cambio ? `
-        <div class="row">
-          <div>Cambio:</div>
-          <div>$${data.cambio.toFixed(2)}</div>
-        </div>
-      ` : ''}
+      ${data.cambio ? `<div>Cambio: $${data.cambio.toFixed(2)}</div>` : ""}
 
-      ${data.comentarios ? `
-        <div class="separator"></div>
-        <div style="font-size: 10px;">Notas: ${data.comentarios}</div>
-      ` : ''}
+      <div class="line"></div>
+      <div class="center"><b>¡Gracias por su compra!</b></div>
 
-      <div class="separator"></div>
-      <div class="center bold">¡Gracias por su compra!</div>
-      <div class="separator"></div>
-    </div>
-  `;
-};
+      <br><br><br>
+    </body>
+  </html>
+  `
+}
 
-// Expose print method to parent
-defineExpose({ print });
+const printReceiptWindow = async () => {
+  if (!props.data) return
+  
+  const html = generateReceiptHTML(props.data)
+  
+  try {
+    // Detectar si estamos en Electron o navegador
+    const isElectron = typeof window !== 'undefined' && (window.electron !== undefined || window.pos?.printTicket !== undefined)
+    
+    if (isElectron && window.pos?.printTicket) {
+      // Estamos en Electron - usar API nativa
+      await window.pos.printTicket(html)
+      console.log('✅ Ticket enviado a impresora (Electron)')
+    } else {
+      // Estamos en navegador - imprimir en ventana nueva
+      console.log('📄 Imprimiendo en navegador (fallback)')
+      const printWindow = window.open('', '_blank')
+      if (printWindow) {
+        printWindow.document.write(html)
+        printWindow.document.close()
+        printWindow.print()
+        console.log('✅ Ventana de impresión abierta')
+      }
+    }
+  } catch (error) {
+    console.error('❌ Error imprimiendo:', error)
+    // Fallback a ventana si falla
+    const printWindow = window.open('', '_blank')
+    if (printWindow) {
+      const generatedHtml = props.data ? generateReceiptHTML(props.data) : ''
+      printWindow.document.write(generatedHtml)
+      printWindow.document.close()
+      printWindow.print()
+    }
+  }
+}
+
+defineExpose({
+  getHTML: () => props.data ? generateReceiptHTML(props.data) : null,
+  print: printReceiptWindow
+})
 </script>
 
 <template>
-  <!-- This component doesn't render anything visible, it's just for printing -->
-  <div style="display: none;"></div>
+  <div style="display:none"></div>
 </template>

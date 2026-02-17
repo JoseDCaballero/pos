@@ -33,8 +33,8 @@ export default defineConfig((/* ctx */) => {
     // Full list of options: https://v2.quasar.dev/quasar-cli-vite/quasar-config-file#build
     build: {
       target: {
-        browser: ['es2022', 'firefox115', 'chrome108', 'safari14'],
-        node: 'node16',
+        browser: ['es2022', 'firefox128', 'chrome132', 'safari17'],
+        node: 'node20',
       },
 
       typescript: {
@@ -219,13 +219,14 @@ export default defineConfig((/* ctx */) => {
         },
 
         nsis: {
-          oneClick: false, // Permite elegir carpeta de instalación
+          oneClick: false,
           allowToChangeInstallationDirectory: true,
           createDesktopShortcut: true,
           createStartMenuShortcut: true,
           shortcutName: 'Telas Emanuel App',
           installerIcon: 'src-electron/icons/win/icon.ico',
           uninstallerIcon: 'src-electron/icons/win/icon.ico',
+          allowElevation: true,
         },
       },
     },
