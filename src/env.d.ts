@@ -9,5 +9,6 @@ declare namespace NodeJS {
 interface Window {
   pos: {
     printTicket: (html: string) => Promise<void>;
+    openCashDrawer?: () => Promise<{ success: boolean; message?: string; printerName?: string }>;
   };
 }

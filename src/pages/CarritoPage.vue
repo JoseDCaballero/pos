@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue';
+import { ref, computed, onMounted, watch, nextTick } from 'vue';
 import api from 'src/api/axios';
 import { usePedidosStore } from 'src/stores/pedidos-store';
 import { useQuasar } from 'quasar';
 import PaymentModal from 'src/components/PaymentModal.vue';
 import { socket } from 'src/boot/socket';
 import ReceiptPrinter from 'src/components/ReceiptPrinter.vue';
-import type { ReceiptData } from 'src/components/types';
+import type { PaymentBreakdown, ReceiptData } from 'src/components/types';
 import { openCashDrawer, simulateCashDrawer } from 'src/utils/cashDrawer';
 
 interface Producto {
@@ -56,6 +56,7 @@ const buscando = ref(false);
 
 const carrito = ref<ItemCarrito[]>([]);
 const cliente = ref('');
+const clienteInput = ref<HTMLInputElement | null>(null);
 const enviando = ref(false);
 const showPagoModal = ref(false);
 const comentarios = ref('');
@@ -175,6 +176,7 @@ const subtotal = computed(() =>
   }, 0),
 );
 const total = computed(() => +subtotal.value.toFixed(2));
+const clienteNombre = computed(() => cliente.value.trim());
 
 const enviar = async (extra: { comprador?: string } = {}) => {
   if (!carrito.value.length) {
@@ -184,7 +186,7 @@ const enviar = async (extra: { comprador?: string } = {}) => {
   enviando.value = true;
   try {
     const pedido = {
-      comprador: (extra.comprador ?? cliente.value ?? '').trim() || 'Cliente',
+      comprador: (extra.comprador ?? cliente.value ?? '').trim(),
       productos: carrito.value.map((i) => ({
         productoId: i.productoId,
         nombre: i.nombre,
@@ -225,13 +227,28 @@ const enviar = async (extra: { comprador?: string } = {}) => {
 };
 
 const abrirModalPago = () => {
+  if (!clienteNombre.value) {
+    $q.notify({
+      message: 'Escribe el nombre del cliente antes de cobrar',
+      color: 'warning',
+      position: 'top',
+    });
+    void nextTick(() => clienteInput.value?.focus());
+    return;
+  }
   showPagoModal.value = true;
 };
 
-const confirmarPago = async (data: { montoPagado: number; comentarios: string; metodoPago: string }) => {
+const confirmarPago = async (data: { montoPagado: number; comentarios: string; metodoPago: string; pagoDetalle: PaymentBreakdown }) => {
   showPagoModal.value = false;
-  const { montoPagado: mp, comentarios: cs, metodoPago: mpago } = data;
+  const { montoPagado: mp, comentarios: cs, metodoPago: mpago, pagoDetalle } = data;
   comentarios.value = cs;
+  const clienteParaVenta = clienteNombre.value;
+
+  if (!clienteParaVenta) {
+    $q.notify({ message: 'Nombre de cliente inválido', color: 'warning' });
+    return;
+  }
   
   // IMPORTANTE: Capturar los datos del carrito ANTES de que se limpien
   const productosParaRecibo = carrito.value.map(i => ({
@@ -240,6 +257,15 @@ const confirmarPago = async (data: { montoPagado: number; comentarios: string; m
     nombre: i.nombre,
     precio_unitario: esPrecioTap.value ? Number(i.precio_tap ?? 0) : Number(i.precio ?? 0)
   }));
+
+  const ahorroTapicero = esPrecioTap.value
+    ? carrito.value.reduce((acc, i) => {
+      const precioNormal = Number(i.precio ?? 0);
+      const precioTap = Number(i.precio_tap ?? 0);
+      const ahorroUnitario = Math.max(0, precioNormal - precioTap);
+      return acc + ahorroUnitario * Number(i.cantidad ?? 0);
+    }, 0)
+    : 0;
   
   const totalParaRecibo = Number(total.value); // Capturar ANTES de limpiar
   
@@ -256,14 +282,14 @@ const confirmarPago = async (data: { montoPagado: number; comentarios: string; m
 
   try {
     // Crear pedido en la base de datos
-    const creado = await enviar({ comprador: cliente.value });
+    const creado = await enviar({ comprador: clienteParaVenta });
 
     if (!creado || !creado.id) {
       throw new Error('No se pudo crear el pedido antes de procesar la venta');
     }
 
     const payload = {
-      cliente: cliente.value || 'Cliente',
+      cliente: clienteParaVenta,
       total: Number(total.value),
       detallesVenta,
       bodega_id: 1,
@@ -280,13 +306,15 @@ const confirmarPago = async (data: { montoPagado: number; comentarios: string; m
 
       // Print receipt automatically - Usar los datos capturados ANTES de limpiar el carrito
       const reciboDatos: ReceiptData = {
-        cliente: cliente.value || 'Cliente',
+        cliente: clienteParaVenta,
         productos: productosParaRecibo,
         total: totalParaRecibo,
         metodoPago: mpago,
+        pagoDetalle,
         fecha: new Date().toISOString(),
         ...(comentarios.value ? { comentarios: comentarios.value } : {}),
-        ...(vuelto > 0 ? { cambio: vuelto } : {})
+        ...(vuelto > 0 ? { cambio: vuelto } : {}),
+        ...(ahorroTapicero > 0 ? { ahorroTapicero: Number(ahorroTapicero.toFixed(2)) } : {}),
       };
       
       console.log('📋 Datos del recibo:', reciboDatos);
@@ -304,8 +332,21 @@ const confirmarPago = async (data: { montoPagado: number; comentarios: string; m
 
       // Open cash drawer after successful payment
       setTimeout(() => {
-        simulateCashDrawer(); // Simulate with sound
-        // Uncomment the line below if you have a real ESC/POS printer connected:
+        if (window.pos?.openCashDrawer) {
+          window.pos.openCashDrawer()
+            .then((result) => {
+              if (!result?.success) {
+                console.warn('No se pudo abrir caja desde Electron:', result?.message ?? 'sin detalle');
+                simulateCashDrawer();
+              }
+            })
+            .catch((error) => {
+              console.error('Error abriendo caja desde Electron:', error);
+              simulateCashDrawer();
+            });
+          return;
+        }
+
         openCashDrawer().catch(() => simulateCashDrawer());
       }, 1500);
 
@@ -503,6 +544,19 @@ onMounted(() => {
           </div>
 
           <div class="action-buttons">
+            <div class="client-field">
+              <label for="cliente-input" class="client-label">Cliente</label>
+              <div class="client-input-wrapper">
+                <svg class="client-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  stroke-width="2">
+                  <path d="M20 21a8 8 0 0 0-16 0"></path>
+                  <circle cx="12" cy="7" r="4"></circle>
+                </svg>
+                <input id="cliente-input" ref="clienteInput" v-model="cliente" class="client-input" type="text"
+                  placeholder="Escribe el nombre del cliente" maxlength="80" />
+              </div>
+            </div>
+
             <button class="btn-primary" @click="abrirModalPago" :disabled="enviando || !carrito.length">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="1" y="4" width="22" height="16" rx="2" ry="2"></rect>
@@ -1182,6 +1236,57 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 1rem;
+}
+
+.client-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.client-label {
+  font-size: 0.875rem;
+  font-weight: 700;
+  color: #6b4b36;
+  letter-spacing: 0.2px;
+}
+
+.client-input-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.75rem 0.9rem;
+  border-radius: 14px;
+  border: 1px solid rgba(139, 94, 60, 0.16);
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+  box-shadow: 0 6px 18px rgba(139, 94, 60, 0.08);
+  transition: border-color 0.25s ease, box-shadow 0.25s ease, transform 0.2s ease;
+}
+
+.client-input-wrapper:focus-within {
+  border-color: #d9a441;
+  box-shadow: 0 10px 26px rgba(139, 94, 60, 0.16);
+  transform: translateY(-1px);
+}
+
+.client-icon {
+  color: #8b5e3c;
+  opacity: 0.85;
+}
+
+.client-input {
+  width: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #4a3220;
+}
+
+.client-input::placeholder {
+  color: rgba(74, 50, 32, 0.45);
+  font-weight: 500;
 }
 
 .btn-primary,

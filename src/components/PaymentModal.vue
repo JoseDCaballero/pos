@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue';
+import type { PaymentBreakdown } from './types';
 
 const props = defineProps<{
   show: boolean;
@@ -10,7 +11,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'close'): void;
-  (e: 'confirm', data: { montoPagado: number; comentarios: string; metodoPago: string }): void;
+  (e: 'confirm', data: { montoPagado: number; comentarios: string; metodoPago: string; pagoDetalle: PaymentBreakdown }): void;
 }>();
 
 // Estado granular del pago
@@ -114,21 +115,20 @@ const asignarResto = (campo: 'pesos' | 'usd' | 'tarjeta' | 'transferencia') => {
 const handleConfirm = () => {
   if (!canConfirm.value) return;
 
-  // Generar resumen automático en comentarios si es mixto o tiene USD
-  let resumen = '';
-  if (metodoPago.value === 'MIXTO' || montoUSD.value > 0) {
-    const partes = [];
-    if (montoPesos.value > 0) partes.push(`Pesos: $${montoPesos.value}`);
-    if (montoUSD.value > 0) partes.push(`USD: ${montoUSD.value} (Tasa: ${tasaCambio.value})`);
-    if (montoTarjeta.value > 0) partes.push(`Tarjeta: $${montoTarjeta.value}`);
-    if (montoTransferencia.value > 0) partes.push(`Transf: $${montoTransferencia.value}`);
-    resumen = `[Detalle Pago: ${partes.join(' | ')}] `;
-  }
+  const pagoDetalle: PaymentBreakdown = {
+    efectivo: Number(montoPesos.value || 0),
+    tarjeta: Number(montoTarjeta.value || 0),
+    transferencia: Number(montoTransferencia.value || 0),
+    dolares: Number(montoUSD.value || 0),
+    tasaCambio: Number(tasaCambio.value || 0),
+    totalPagado: Number(totalPagado.value || 0),
+  };
 
   emit('confirm', {
     montoPagado: totalPagado.value,
-    comentarios: (resumen + comentarios.value).trim(),
-    metodoPago: metodoPago.value
+    comentarios: comentarios.value.trim(),
+    metodoPago: metodoPago.value,
+    pagoDetalle,
   });
 };
 </script>

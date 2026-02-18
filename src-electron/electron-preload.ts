@@ -1,7 +1,8 @@
 import { contextBridge, ipcRenderer } from "electron"
 
 contextBridge.exposeInMainWorld("pos", {
-  printTicket: (html: string) => ipcRenderer.invoke("print-ticket", html)
+  printTicket: (html: string) => ipcRenderer.invoke("print-ticket", html),
+  openCashDrawer: () => ipcRenderer.invoke('open-cash-drawer')
 })
 
 /**

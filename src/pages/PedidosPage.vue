@@ -7,6 +7,8 @@ import { usePedidosStore, type Pedido, type PedidoBackend } from 'src/stores/ped
 import { storeToRefs } from 'pinia';
 import { useAuthStore } from 'src/stores/auth';
 import PaymentModal from 'src/components/PaymentModal.vue';
+import ReceiptPrinter from 'src/components/ReceiptPrinter.vue';
+import type { PaymentBreakdown, ReceiptData } from 'src/components/types';
 
 import { useRouter } from 'vue-router';
 
@@ -20,6 +22,8 @@ const authStore = useAuthStore();
 
 const showPagoModal = ref(false);
 const pedidoParaCompletar = ref<Pedido | null>(null);
+const receiptPrinter = ref<InstanceType<typeof ReceiptPrinter> | null>(null);
+const currentReceipt = ref<ReceiptData | null>(null);
 
 const cargarPedidos = async () => {
   cargando.value = true;
@@ -72,7 +76,7 @@ const editPedido = (pedido: Pedido) => {
   void router.push('/tienda');
 };
 
-const confirmarPago = async (data: { montoPagado: number; comentarios: string; metodoPago: string }) => {
+const confirmarPago = async (data: { montoPagado: number; comentarios: string; metodoPago: string; pagoDetalle: PaymentBreakdown }) => {
   console.log('Confirmando pago con data:', data);
   if (!pedidoParaCompletar.value || !pedidoParaCompletar.value.id) {
     console.error('No hay pedido para completar seleccionado');
@@ -106,6 +110,13 @@ const confirmarPago = async (data: { montoPagado: number; comentarios: string; m
       });
     }
 
+    const productosParaRecibo = (pedido.productos || []).map((p, idx) => ({
+      cantidad: typeof p.cantidad === 'string' ? parseFloat(p.cantidad) : Number(p.cantidad),
+      medida: p.medida,
+      nombre: p.nombre,
+      precio_unitario: Number(detallesVenta[idx]?.precio_unitario ?? 0),
+    }));
+
     const payload = {
       cliente: pedido.comprador,
       total: total,
@@ -120,6 +131,22 @@ const confirmarPago = async (data: { montoPagado: number; comentarios: string; m
     if (response && (response.status === 201 || response.status === 200)) {
       await pedidosStore.actualizarEstadoPedido(pedido.id!, 'pagado');
       const vuelto = data.montoPagado - total;
+
+      currentReceipt.value = {
+        cliente: pedido.comprador || 'Cliente',
+        productos: productosParaRecibo,
+        total: Number(total),
+        metodoPago: data.metodoPago,
+        pagoDetalle: data.pagoDetalle,
+        fecha: new Date().toISOString(),
+        ...(data.comentarios ? { comentarios: data.comentarios } : {}),
+        ...(vuelto > 0 ? { cambio: Number(vuelto.toFixed(2)) } : {}),
+      };
+
+      setTimeout(() => {
+        receiptPrinter.value?.print();
+      }, 500);
+
       $q.notify({
         message: `Pedido completado. Cambio: $${vuelto.toFixed(2)}`,
         color: 'positive',
@@ -356,6 +383,8 @@ onUnmounted(() => {
     <PaymentModal v-if="showPagoModal" :show="true" :total="Number(pedidoParaCompletar?.total || 0)"
       :clientName="pedidoParaCompletar?.comprador" :initialComments="pedidoParaCompletar?.comentarios || ''"
       @close="showPagoModal = false" @confirm="confirmarPago" />
+
+    <ReceiptPrinter ref="receiptPrinter" :data="currentReceipt" />
   </main>
 </template>
 
