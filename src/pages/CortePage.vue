@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue';
+import { ref, computed, onMounted, nextTick } from 'vue';
 import api from 'src/api/axios';
 import { useQuasar, date } from 'quasar';
-import type ReceiptPrinter from 'src/components/ReceiptPrinter.vue';
+import ReceiptPrinter from 'src/components/ReceiptPrinter.vue';
 import type { ReceiptData } from 'src/components/types';
 
 // Interfaces based on API introspection
@@ -34,7 +34,6 @@ const productosMap = ref<Map<number, string>>(new Map());
 const receiptPrinter = ref<InstanceType<typeof ReceiptPrinter> | null>(null);
 const lastReceipt = ref<ReceiptData | null>(null);
 
-// Helper for currency formatting
 const formatCurrency = (amount: number | string | undefined | null) => {
   if (amount === undefined || amount === null) return '$0.00';
   return Number(amount).toLocaleString('en-US', {
@@ -55,11 +54,80 @@ const formatTime = (dateString: string | undefined | null) => {
 
 const todayDate = computed(() => date.formatDate(Date.now(), 'DD/MM/YYYY'));
 
+const parseDetailedPaymentComment = (rawComment: string | null): {
+  comments: string;
+  pagoDetalle?: ReceiptData['pagoDetalle'];
+} => {
+  const comment = rawComment ?? '';
+  const detailMatch = comment.match(/\[Detalle Pago:([^\]]+)\]/i);
+
+  if (!detailMatch || !detailMatch[1]) {
+    return { comments: comment.trim() };
+  }
+
+  const detailText = detailMatch[1];
+
+  const parseAmount = (regex: RegExp): number => {
+    const match = detailText.match(regex);
+    if (!match || !match[1]) return 0;
+    const value = Number(match[1]);
+    return Number.isFinite(value) ? value : 0;
+  };
+
+  const efectivo = parseAmount(/Pesos:\s*\$([\d.]+)/i);
+  const dolares = parseAmount(/USD:\s*([\d.]+)/i);
+  const tasaCambio = parseAmount(/\(Tasa:\s*([\d.]+)\)/i);
+  const tarjeta = parseAmount(/Tarjeta:\s*\$([\d.]+)/i);
+  const transferencia = parseAmount(/Transf:\s*\$([\d.]+)/i);
+  const totalPagado = efectivo + tarjeta + transferencia + (dolares * tasaCambio);
+
+  const cleanedComment = comment
+    .replace(detailMatch[0], '')
+    .trim();
+
+  return {
+    comments: cleanedComment,
+    pagoDetalle: {
+      efectivo,
+      tarjeta,
+      transferencia,
+      dolares,
+      tasaCambio,
+      totalPagado: Number(totalPagado.toFixed(2)),
+    }
+  };
+};
+
+const buildLastReceiptFromVenta = (venta: Venta): ReceiptData => {
+  const parsed = parseDetailedPaymentComment(venta.comentarios);
+
+  return {
+    cliente: (venta.cliente || 'Cliente General').trim(),
+    productos: (venta.detallesVenta || []).map((detalle) => ({
+      cantidad: Number(detalle.cantidad || 0),
+      medida: detalle.medida || 'UNID',
+      nombre: getProductoNombre(detalle.producto_id),
+      precio_unitario: Number(detalle.precio_unitario || 0),
+    })),
+    total: Number(venta.total || 0),
+    metodoPago: String(venta.metodo_pago || 'EFECTIVO').toUpperCase(),
+    fecha: venta.fecha_venta,
+    ...(parsed.comments ? { comentarios: parsed.comments } : {}),
+    ...(parsed.pagoDetalle ? { pagoDetalle: parsed.pagoDetalle } : {}),
+  };
+};
+
+const updateLastReceipt = () => {
+  const latestSale = ventasHoy.value[0];
+  lastReceipt.value = latestSale ? buildLastReceiptFromVenta(latestSale) : null;
+};
+
 const loadVentas = async () => {
   loading.value = true;
   try {
     const { data } = await api.get<Venta[]>('ventas');
     ventas.value = data;
+    updateLastReceipt();
   } catch (error) {
     console.error(error);
     $q.notify({
@@ -93,6 +161,7 @@ const loadProductos = async () => {
         productosMap.value.set(productoId, nombre);
       }
     });
+    updateLastReceipt();
   } catch (error) {
     console.error('Error al cargar productos:', error);
   }
@@ -194,6 +263,112 @@ const printLastReceipt = () => {
 
   receiptPrinter.value?.print();
 };
+
+const printVenta = async (venta: Venta) => {
+  lastReceipt.value = buildLastReceiptFromVenta(venta);
+  await nextTick();
+  receiptPrinter.value?.print();
+};
+
+const formatMoney = (amount: number) => `$${Number(amount || 0).toFixed(2)}`;
+
+const generateDailyReportHTML = () => {
+  return `
+  <html>
+    <head>
+      <meta charset="UTF-8" />
+      <style>
+        html, body {
+          width: 58mm;
+          margin: 0;
+          padding: 0;
+        }
+
+        @page {
+          size: 58mm auto;
+          margin: 0;
+        }
+
+        body {
+          font-family: monospace;
+          font-size: 13px;
+          max-width: 58mm;
+          padding: 8px;
+          box-sizing: border-box;
+        }
+
+        .center { text-align: center; }
+        .line { border-top: 1px dashed #000; margin: 6px 0; }
+        .row {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin: 3px 0;
+        }
+        .label { font-weight: bold; }
+        .value { text-align: right; }
+        .title {
+          font-size: 16px;
+          font-weight: bold;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="center title">REPORTE DEL DÍA</div>
+      <div class="center">${todayDate.value}</div>
+
+      <div class="line"></div>
+
+      <div class="row"><span class="label">Ingreso Total:</span><span class="value">${formatMoney(totalIngresos.value)}</span></div>
+      <div class="row"><span class="label">Transacciones:</span><span class="value">${totalTransacciones.value}</span></div>
+
+      <div class="line"></div>
+
+      <div class="row"><span class="label">Efectivo:</span><span class="value">${formatMoney(stats.value.efectivo)}</span></div>
+      <div class="row"><span class="label">Tarjeta:</span><span class="value">${formatMoney(stats.value.tarjeta)}</span></div>
+      <div class="row"><span class="label">Transferencia:</span><span class="value">${formatMoney(stats.value.transferencia)}</span></div>
+      <div class="row"><span class="label">Dólares:</span><span class="value">USD ${formatNumber(stats.value.usd)}</span></div>
+
+      <div class="line"></div>
+      <div class="center">Generado: ${new Date().toLocaleString()}</div>
+
+      <br><br><br>
+    </body>
+  </html>
+  `;
+};
+
+const printDailyReport = async () => {
+  try {
+    const html = generateDailyReportHTML();
+
+    if (window.pos?.printTicket) {
+      await window.pos.printTicket(html);
+      return;
+    }
+
+    const printWindow = window.open('', '_blank');
+    if (printWindow) {
+      printWindow.document.write(html);
+      printWindow.document.close();
+      printWindow.print();
+      return;
+    }
+
+    $q.notify({
+      message: 'No se pudo abrir la ventana de impresión',
+      color: 'negative',
+      icon: 'error'
+    });
+  } catch (error) {
+    console.error('Error imprimiendo reporte del día:', error);
+    $q.notify({
+      message: 'Error al imprimir el reporte del día',
+      color: 'negative',
+      icon: 'error'
+    });
+  }
+};
 </script>
 
 <template>
@@ -207,6 +382,9 @@ const printLastReceipt = () => {
         </div>
       </div>
       <div class="row q-gutter-sm">
+        <q-btn icon="print" flat round color="orange-8" @click="printDailyReport">
+          <q-tooltip>Imprimir Reporte del Día</q-tooltip>
+        </q-btn>
         <q-btn icon="print" flat round color="primary" @click="printLastReceipt" :disable="!lastReceipt">
           <q-tooltip>Imprimir Último Recibo</q-tooltip>
         </q-btn>
@@ -310,6 +488,9 @@ const printLastReceipt = () => {
                 </div>
               </div>
               <div class="col-auto text-right row items-center q-gutter-x-sm">
+                <q-btn icon="print" flat round dense color="primary" @click.stop="printVenta(venta)">
+                  <q-tooltip>Imprimir esta venta</q-tooltip>
+                </q-btn>
                 <div>
                   <div class="text-weight-bolder text-primary text-body1">{{ formatCurrency(venta.total) }}</div>
                   <div class="text-caption text-grey-5">#{{ venta.id }}</div>

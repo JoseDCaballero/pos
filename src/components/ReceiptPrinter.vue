@@ -168,7 +168,7 @@ const generateReceiptHTML = (data: ReceiptData, logoSrc: string = logoImg) => {
 
         body {
           font-family: monospace;
-          font-size: 12px;
+          font-size: 13px;
           max-width: 58mm;
           overflow: hidden;
         }
@@ -197,7 +197,7 @@ const generateReceiptHTML = (data: ReceiptData, logoSrc: string = logoImg) => {
         th {
           text-align: left;
           font-weight: bold;
-          font-size: 11px;
+          font-size: 12px;
           border-bottom: 1px dashed black;
           padding: 2px 0;
         }
@@ -205,7 +205,7 @@ const generateReceiptHTML = (data: ReceiptData, logoSrc: string = logoImg) => {
         td {
           padding: 2px 0;
           vertical-align: top;
-          font-size: 11px;
+          font-size: 12px;
         }
 
         .col-right {
@@ -220,17 +220,18 @@ const generateReceiptHTML = (data: ReceiptData, logoSrc: string = logoImg) => {
         }
 
         .qty-row td {
-          font-size: 11px;
+          font-size: 12px;
           padding-top: 0;
           padding-bottom: 4px;
         }
 
         h3 {
           margin: 4px 0;
+          font-size: 16px;
         }
 
         .total {
-          font-size: 14px;
+          font-size: 16px;
           font-weight: bold;
         }
       </style>

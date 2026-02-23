@@ -94,6 +94,14 @@ const formatNumber = (val: number | string | undefined | null) => {
     maximumFractionDigits: 2,
   });
 };
+
+const formatPrice = (val: number | string | undefined | null) => {
+  if (val === null || val === undefined) return '$0.00';
+  return `$${Number(val).toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+};
 const enviandoPedido = ref(false);
 const datos = ref<{ email?: string } | null>(null);
 const nombreCliente = ref<string>('');
@@ -597,7 +605,7 @@ watch(
             <div class="row justify-between items-center q-mb-md">
               <span class="text-subtitle1 text-weight-bold">Total:</span>
               <span class="text-h6 text-primary text-weight-bolder gradient-text">${{ formatNumber(totalPedido)
-              }}</span>
+                }}</span>
             </div>
             <div class="row q-col-gutter-sm no-wrap">
               <div class="col-4">
@@ -637,13 +645,24 @@ watch(
                 <span class="stat-unit">{{ prod.medida_ind }}</span>
               </div>
 
+              <div class="price-grid">
+                <div class="price-item">
+                  <span class="price-label">Precio</span>
+                  <span class="price-value">{{ formatPrice(prod.precio) }}</span>
+                </div>
+                <div class="price-item price-item-tap">
+                  <span class="price-label">Precio Tapicero</span>
+                  <span class="price-value">{{ formatPrice(prod.precio_tap) }}</span>
+                </div>
+              </div>
+
               <!-- Quantity Control (Vendedor only) -->
               <div class="quantity-control" v-if="datos?.email === 'vendedor'">
                 <button @click="decrementarCantidad(prod)" class="btn-qty" :disabled="prod.cantidadPedido === 0">
                   -
                 </button>
                 <input type="number" v-model.number="prod.cantidadPedido" inputmode="decimal" min="0" step="any"
-                  :max="prod.cantidad" class="qty-input" />
+                  :max="prod.cantidad" class="qty-input" :disabled="prod.cantidad == 0" />
                 <button @click="incrementarCantidad(prod)" class="btn-qty"
                   :disabled="prod.cantidadPedido >= prod.cantidad">
                   +
@@ -665,7 +684,7 @@ watch(
                   <span class="detail-val">{{ formatNumber(detalle.cantidad) }} {{ prod.medida_ind }}</span>
                   <span class="detail-status" :class="detalle.estado?.toLowerCase()">{{
                     detalle.estado
-                    }}</span>
+                  }}</span>
                 </div>
               </div>
             </div>
@@ -828,6 +847,42 @@ watch(
   text-transform: uppercase;
   letter-spacing: 1px;
   margin-top: 0.25rem;
+}
+
+.price-grid {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+}
+
+.price-item {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 0.45rem 0.6rem;
+  background: #f8fafc;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.price-item-tap {
+  background: #fff8e1;
+  border-color: #ffd54f;
+}
+
+.price-label {
+  font-size: 0.72rem;
+  color: #64748b;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 700;
+}
+
+.price-value {
+  font-size: 1rem;
+  font-weight: 800;
+  color: #1f2937;
 }
 
 .quantity-control {
