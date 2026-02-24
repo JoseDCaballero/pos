@@ -16,6 +16,30 @@ if (process.platform === 'win32') {
 
 let mainWindow: BrowserWindow | undefined;
 
+const thermalPrinterKeywords = [
+  'pos',
+  'thermal',
+  'ticket',
+  'tm-t20',
+  'xprinter',
+  'epson',
+  'star',
+  'zebra',
+  'bixolon',
+  'receipt',
+  '58mm',
+  '80mm',
+];
+
+function findThermalPrinterName(printers: Electron.PrinterInfo[]): string {
+  const thermalPrinter = printers.find((printer) => {
+    const printerName = printer.name.toLowerCase();
+    return thermalPrinterKeywords.some((keyword) => printerName.includes(keyword));
+  });
+
+  return thermalPrinter?.name ?? '';
+}
+
 function runPowerShell(command: string): Promise<void> {
   return new Promise((resolve, reject) => {
     execFile(
@@ -40,11 +64,7 @@ function quoteForPowerShell(value: string): string {
 async function getPreferredPrinterName(): Promise<string> {
   const printers = await mainWindow?.webContents.getPrintersAsync();
   const list = printers ?? [];
-  const thermalPrinter = list.find((p) => {
-    const n = p.name.toLowerCase();
-    return n.includes('pos') || n.includes('thermal') || n.includes('ticket') || n.includes('tm-t20') || n.includes('xprinter');
-  });
-  return thermalPrinter?.name || list[0]?.name || '';
+  return findThermalPrinterName(list);
 }
 
 async function openCashDrawerWindows(printerName: string): Promise<void> {
@@ -205,10 +225,12 @@ ipcMain.handle('print-ticket', async (event, html: string) => {
 
   await win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
   const printers = await win.webContents.getPrintersAsync()
-  const thermalPrinter = printers.find((p) => {
-    const n = p.name.toLowerCase()
-    return n.includes('pos') || n.includes('thermal') || n.includes('ticket') || n.includes('tm-t20') || n.includes('xprinter')
-  })
+  const selectedPrinterName = findThermalPrinterName(printers)
+
+  if (!selectedPrinterName) {
+    win.close()
+    throw new Error('No se encontró una impresora térmica compatible. Configura la impresora de tickets e inténtalo de nuevo.')
+  }
   
   // Configuración de impresión para tickets térmicos 58mm
   const options: Parameters<typeof win.webContents.print>[0] = {
@@ -222,7 +244,7 @@ ipcMain.handle('print-ticket', async (event, html: string) => {
     },
     printBackground: true,
     scaleFactor: 100,
-    deviceName: thermalPrinter?.name || printers[0]?.name || ''
+    deviceName: selectedPrinterName
   }
 
   try {

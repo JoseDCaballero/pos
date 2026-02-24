@@ -362,8 +362,13 @@ const printDailyReport = async () => {
     });
   } catch (error) {
     console.error('Error imprimiendo reporte del día:', error);
+
+    const message = error instanceof Error
+      ? error.message
+      : 'Error al imprimir el reporte del día';
+
     $q.notify({
-      message: 'Error al imprimir el reporte del día',
+      message,
       color: 'negative',
       icon: 'error'
     });

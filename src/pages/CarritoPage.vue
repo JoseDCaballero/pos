@@ -64,6 +64,38 @@ const esPrecioTap = ref(false);
 const receiptPrinter = ref<InstanceType<typeof ReceiptPrinter> | null>(null);
 const currentReceipt = ref<ReceiptData | null>(null);
 
+const parseDecimal = (value: unknown): number => {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  if (typeof value !== 'string') {
+    const numeric = Number(value ?? 0);
+    return Number.isFinite(numeric) ? numeric : 0;
+  }
+
+  const text = value.trim();
+  if (!text) return 0;
+
+  const hasComma = text.includes(',');
+  const hasDot = text.includes('.');
+
+  let normalized = text;
+
+  if (hasComma && hasDot) {
+    const lastComma = text.lastIndexOf(',');
+    const lastDot = text.lastIndexOf('.');
+    normalized = lastComma > lastDot
+      ? text.replaceAll('.', '').replace(',', '.')
+      : text.replaceAll(',', '');
+  } else if (hasComma) {
+    normalized = text.replace(',', '.');
+  }
+
+  const parsed = Number.parseFloat(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
 const buscar = async (valor: string) => {
   if (!valor) {
     sugerencias.value = [];
@@ -89,10 +121,10 @@ const buscar = async (valor: string) => {
         producto_id: p.producto_id ?? p.producto?.id,
         bodega_id: p.bodega_id, // Include bodega_id for cart tracking
         nombre: p.producto?.nombre || 'Producto',
-        precio: Number(p.precio ?? p.producto?.precio ?? 0),
-        precio_tap: Number(p.precio_tap ?? p.producto?.precio_tap ?? 0),
+        precio: parseDecimal(p.precio ?? p.producto?.precio ?? 0),
+        precio_tap: parseDecimal(p.precio_tap ?? p.producto?.precio_tap ?? 0),
         medida_ind: p.medida_ind || 'X',
-        cantidad: Number(p.cantidad ?? 0),
+        cantidad: parseDecimal(p.cantidad ?? 0),
       }))
       .slice(0, 12);
   } catch (err) {
@@ -113,7 +145,7 @@ const onTermInput = (e: Event) => {
 const agregarAlCarrito = (p: Producto) => {
   const pid = Number(p.producto_id ?? p.id);
   const existente = carrito.value.find((i) => i.productoId === pid);
-  const stockDisponible = Number(p.cantidad ?? 0);
+  const stockDisponible = parseDecimal(p.cantidad ?? 0);
 
   if (existente) {
     if (existente.cantidad < existente.stock) {
@@ -133,8 +165,8 @@ const agregarAlCarrito = (p: Producto) => {
       cantidad: 0.5,
       medida: p.medida_ind || 'UNID',
       stock: stockDisponible,
-      precio: Number(p.precio ?? 0),
-      precio_tap: Number(p.precio_tap ?? 0),
+      precio: parseDecimal(p.precio ?? 0),
+      precio_tap: parseDecimal(p.precio_tap ?? 0),
     };
     carrito.value.push(item as ItemCarrito);
   }
@@ -143,7 +175,7 @@ const agregarAlCarrito = (p: Producto) => {
 };
 
 const fmt = (v: unknown) => {
-  const n = Number(v);
+  const n = parseDecimal(v);
   return Number.isFinite(n) ? n.toFixed(2) : '--';
 };
 
@@ -171,7 +203,7 @@ const actualizarCantidad = (id: number, cantidad: number) => {
 
 const subtotal = computed(() =>
   carrito.value.reduce((s, i) => {
-    const p = esPrecioTap.value ? Number(i.precio_tap ?? 0) : Number(i.precio ?? 0);
+    const p = esPrecioTap.value ? parseDecimal(i.precio_tap ?? 0) : parseDecimal(i.precio ?? 0);
     return s + p * i.cantidad;
   }, 0),
 );
@@ -255,19 +287,19 @@ const confirmarPago = async (data: { montoPagado: number; comentarios: string; m
     cantidad: i.cantidad,
     medida: i.medida,
     nombre: i.nombre,
-    precio_unitario: esPrecioTap.value ? Number(i.precio_tap ?? 0) : Number(i.precio ?? 0)
+    precio_unitario: esPrecioTap.value ? parseDecimal(i.precio_tap ?? 0) : parseDecimal(i.precio ?? 0)
   }));
 
   const ahorroTapicero = esPrecioTap.value
     ? carrito.value.reduce((acc, i) => {
-      const precioNormal = Number(i.precio ?? 0);
-      const precioTap = Number(i.precio_tap ?? 0);
+      const precioNormal = parseDecimal(i.precio ?? 0);
+      const precioTap = parseDecimal(i.precio_tap ?? 0);
       const ahorroUnitario = Math.max(0, precioNormal - precioTap);
-      return acc + ahorroUnitario * Number(i.cantidad ?? 0);
+      return acc + ahorroUnitario * parseDecimal(i.cantidad ?? 0);
     }, 0)
     : 0;
   
-  const totalParaRecibo = Number(total.value); // Capturar ANTES de limpiar
+  const totalParaRecibo = parseDecimal(total.value); // Capturar ANTES de limpiar
   
   console.log('📦 Productos capturados para el recibo:', productosParaRecibo);
   console.log('💰 Total capturado:', totalParaRecibo);
@@ -276,8 +308,8 @@ const confirmarPago = async (data: { montoPagado: number; comentarios: string; m
   // CRITICAL: Use precio_tap when toggle is active, otherwise use precio
   const detallesVenta = carrito.value.map((i) => ({
     producto_id: Number(i.productoId),
-    cantidad: Number(i.cantidad),
-    precio_unitario: esPrecioTap.value ? Number(i.precio_tap ?? 0) : Number(i.precio ?? 0),
+    cantidad: parseDecimal(i.cantidad),
+    precio_unitario: esPrecioTap.value ? parseDecimal(i.precio_tap ?? 0) : parseDecimal(i.precio ?? 0),
   }));
 
   try {
@@ -290,7 +322,7 @@ const confirmarPago = async (data: { montoPagado: number; comentarios: string; m
 
     const payload = {
       cliente: clienteParaVenta,
-      total: Number(total.value),
+      total: parseDecimal(total.value),
       detallesVenta,
       bodega_id: 1,
       comentarios: comentarios.value,
@@ -486,7 +518,7 @@ onMounted(() => {
                     -
                   </button>
                   <input type="number" class="qty-input" v-model.number="item.cantidad"
-                    @change="actualizarCantidad(item.productoId, item.cantidad)" min="0.5" :max="item.stock" />
+                    @change="actualizarCantidad(item.productoId, item.cantidad)" min="0.5" step="0.5" :max="item.stock" />
                   <span class="item-medida">{{ item.medida }}</span>
                   <button class="qty-btn" @click="actualizarCantidad(item.productoId, item.cantidad + 0.5)"
                     :disabled="item.cantidad >= item.stock">

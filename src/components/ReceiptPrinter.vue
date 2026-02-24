@@ -26,7 +26,40 @@ const formatReceiptDate = (rawDate: string) => {
   return `${day}/${month}/${year} ${hours}:${minutes}:${seconds}`
 }
 
-const toMoney = (value: number) => `$${Number(value || 0).toFixed(2)}`
+const toSafeNumber = (value: unknown) => {
+  if (typeof value === 'number') return Number.isFinite(value) ? value : 0
+  if (typeof value !== 'string') {
+    const numeric = Number(value ?? 0)
+    return Number.isFinite(numeric) ? numeric : 0
+  }
+
+  const text = value.trim()
+  if (!text) return 0
+
+  const hasComma = text.includes(',')
+  const hasDot = text.includes('.')
+
+  let normalized = text
+  if (hasComma && hasDot) {
+    const lastComma = text.lastIndexOf(',')
+    const lastDot = text.lastIndexOf('.')
+    normalized = lastComma > lastDot
+      ? text.replaceAll('.', '').replace(',', '.')
+      : text.replaceAll(',', '')
+  } else if (hasComma) {
+    normalized = text.replace(',', '.')
+  }
+
+  const parsed = Number.parseFloat(normalized)
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
+const toMoney = (value: number) => `$${toSafeNumber(value).toFixed(2)}`
+
+const formatQty = (value: unknown) => {
+  const qty = toSafeNumber(value)
+  return Number.isInteger(qty) ? String(qty) : qty.toFixed(2)
+}
 
 const escapeHTML = (text: string) => text
   .replaceAll('&', '&amp;')
@@ -144,7 +177,7 @@ const generateReceiptHTML = (data: ReceiptData, logoSrc: string = logoImg) => {
       <td class="col-right"><b>${toMoney(p.precio_unitario * p.cantidad)}</b></td>
     </tr>
     <tr class="qty-row">
-      <td>Cant: ${Number(p.cantidad)} ${escapeHTML(p.medida ?? '')}</td>
+      <td>Cant: ${formatQty(p.cantidad)} ${escapeHTML(p.medida ?? '')}</td>
       <td></td>
       <td></td>
     </tr>
@@ -316,7 +349,12 @@ const printReceiptWindow = async () => {
     }
   } catch (error) {
     console.error('❌ Error imprimiendo:', error)
-    // Fallback a ventana si falla
+    const isElectron = typeof window !== 'undefined' && (window.electron !== undefined || window.pos?.printTicket !== undefined)
+
+    if (isElectron) {
+      throw error
+    }
+
     const printWindow = window.open('', '_blank')
     if (printWindow) {
       const generatedHtml = props.data ? generateReceiptHTML(props.data) : ''
